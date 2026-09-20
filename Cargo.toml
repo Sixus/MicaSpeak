@@ -1,0 +1,11 @@
+[package]
+name = "micaspeak"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = { version = "=0.36.2" }
+
+[profile.release]
+strip = true
+lto = true
