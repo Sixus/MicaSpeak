@@ -109,7 +109,8 @@ pub fn show(
                         .strong()
                         .color(t.text),
                 );
-                ui.add_space(6.0);
+                // 设计稿：顶栏容器 gap 9（点/服务器名/地址/昵称/齿轮等距）
+                ui.add_space(9.0);
                 ui.label(egui::RichText::new(&st.server_addr).size(font::SMALL).color(t.faint));
                 // 弹性空隙
                 let addr_end = ui.cursor().right();
@@ -120,11 +121,10 @@ pub fn show(
                     |_| {},
                 );
                 ui.label(egui::RichText::new(&st.nick).size(font::AUX).color(t.subtext));
-                ui.add_space(4.0);
+                ui.add_space(9.0);
                 if w::icon_button(ui, t, Icon::Gear, 17.0, Vec2::splat(28.0), None).clicked() {
                     *gear_clicked = true;
                 }
-                ui.add_space(2.0);
             });
         });
 
@@ -358,16 +358,18 @@ fn user_row(ui: &mut Ui, t: &Theme, u: &User, speaking: bool) {
 // ---------- 聊天 ----------
 
 fn chat(ui: &mut Ui, t: &Theme, st: &mut MainState) {
-    // Tab 行
+    // Tab 行（设计稿：容器 padding-left 8、tab 间 gap 2、tab 自身左右 padding 10）
     let (tab_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::hover());
     ui.painter().line_segment(
         [tab_rect.left_bottom(), tab_rect.right_bottom()],
         Stroke::new(1.0, t.divider),
     );
-    draw_tab(ui, t, tab_rect, "频道", true, false);
-    draw_tab(ui, t, tab_rect, "私聊·张三", false, st.unread_pm);
+    let mut x = tab_rect.left() + 8.0;
+    x = draw_tab(ui, t, tab_rect, x, "频道", true, false);
+    x = draw_tab(ui, t, tab_rect, x, "私聊·张三", false, st.unread_pm);
+    let _ = x;
 
-    // 消息列表
+    // 消息列表（设计稿 padding '8px 10px'）
     let msgs_h = ui.available_height() - metrics::COMPOSER_H - 16.0;
     ui.allocate_ui(Vec2::new(ui.available_width(), msgs_h.max(40.0)), |ui| {
         egui::ScrollArea::vertical()
@@ -375,20 +377,25 @@ fn chat(ui: &mut Ui, t: &Theme, st: &mut MainState) {
             .id_salt("chat_scroll")
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                for m in &st.messages {
-                    let job = msg_layout(t, m);
-                    ui.add(
-                        egui::Label::new(job)
-                            .wrap_mode(egui::TextWrapMode::Wrap),
-                    );
-                    ui.add_space(7.0);
-                }
+                egui::Frame::new()
+                    .inner_margin(egui::Margin { left: 10, right: 10, top: 8, bottom: 8 })
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        for m in &st.messages {
+                            let job = msg_layout(t, m);
+                            ui.add(
+                                egui::Label::new(job)
+                                    .wrap_mode(egui::TextWrapMode::Wrap),
+                            );
+                            ui.add_space(7.0);
+                        }
+                    });
             });
     });
 
-    // 输入行
+    // 输入行（设计稿：padding 8 + 输入框 32 → 整行高 48）
     let (rect, _) = ui.allocate_exact_size(
-        Vec2::new(ui.available_width(), metrics::COMPOSER_H),
+        Vec2::new(ui.available_width(), metrics::COMPOSER_H + 16.0),
         Sense::hover(),
     );
     ui.painter().line_segment(
@@ -463,7 +470,18 @@ fn now_hhmm() -> String {
     format!("{:02}:{:02}", day / 3600 + 8, (day % 3600) / 60)
 }
 
-fn draw_tab(ui: &Ui, t: &Theme, tab_rect: Rect, label: &str, active: bool, unread: bool) {
+/// 画一个 Tab，返回下一个 Tab 的起始 x。
+/// 设计稿（MainFrame.tsx）：tab 自身 padding '6px 10px 8px'、tab 间 gap 2、
+/// 未读点距文字 5、激活态 2px 蓝色下划线横跨 tab 全宽（含左右 padding）。
+fn draw_tab(
+    ui: &Ui,
+    t: &Theme,
+    tab_rect: Rect,
+    x_in: f32,
+    label: &str,
+    active: bool,
+    unread: bool,
+) -> f32 {
     let galley = ui.painter().layout(
         label.to_owned(),
         FontId::proportional(font::CTRL_ROW),
@@ -471,25 +489,28 @@ fn draw_tab(ui: &Ui, t: &Theme, tab_rect: Rect, label: &str, active: bool, unrea
         f32::INFINITY,
     );
     let (gw, gh) = (galley.size().x, galley.size().y);
-    let mut x = tab_rect.left() + 8.0;
+    let text_x = x_in + 10.0; // tab 左内边距
     ui.painter().galley(
-        egui::pos2(x, tab_rect.center().y - gh / 2.0),
+        egui::pos2(text_x, tab_rect.center().y - gh / 2.0),
         galley,
         if active { t.text } else { t.subtext },
     );
-    x += gw + 4.0;
-    if unread {
-        ui.painter()
-            .circle_filled(egui::pos2(x + 3.0, tab_rect.center().y), metrics::UNREAD_DOT / 2.0, colors::RED);
-    }
     if active {
         // 激活 Tab 的 2px 蓝色下划线（压在分隔线上）
         let y = tab_rect.bottom() - 0.5;
         ui.painter().line_segment(
-            [egui::pos2(8.0, y), egui::pos2(8.0 + gw + 18.0, y)],
+            [egui::pos2(text_x - 10.0, y), egui::pos2(text_x + gw + 10.0, y)],
             Stroke::new(2.0, colors::BLUE),
         );
     }
+    let mut x = text_x + gw;
+    if unread {
+        x += 5.0;
+        ui.painter()
+            .circle_filled(egui::pos2(x + 3.0, tab_rect.center().y), metrics::UNREAD_DOT / 2.0, colors::RED);
+        x += metrics::UNREAD_DOT;
+    }
+    x + 10.0 + 2.0 // tab 右内边距 + tab 间 gap
 }
 
 fn msg_layout(t: &Theme, m: &ChatMsg) -> egui::text::LayoutJob {

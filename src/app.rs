@@ -351,9 +351,13 @@ impl MicaApp {
                     |ui| {
                         ui.set_width(ui.available_width());
                         ui.set_height(card_h);
-                        ui.label(
-                            egui::RichText::new("书签").size(font::SECTION).strong().color(t.faint),
-                        );
+                        ui.horizontal(|ui| {
+                            // 设计稿：书签标题距卡片内容左边 12
+                            ui.add_space(12.0);
+                            ui.label(
+                                egui::RichText::new("书签").size(font::SECTION).strong().color(t.faint),
+                            );
+                        });
                         ui.add_space(6.0);
                         let link_h = 30.0;
                         let scroll_h = (ui.available_height() - link_h).max(40.0);
@@ -367,9 +371,13 @@ impl MicaApp {
                                 }
                             });
                         });
-                        if w::text_link(ui, "＋ 存为书签") {
-                            action = ConnectAction::Add;
-                        }
+                        ui.horizontal(|ui| {
+                            // 设计稿：链接 margin '4px 8px'
+                            ui.add_space(8.0);
+                            if w::text_link(ui, "＋ 存为书签") {
+                                action = ConnectAction::Add;
+                            }
+                        });
                     },
                 );
             });
