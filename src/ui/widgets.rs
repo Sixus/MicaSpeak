@@ -55,7 +55,7 @@ pub fn card(t: &Theme, pad: Margin) -> egui::Frame {
 /// 点击框内空白也能聚焦输入区。返回 TextEdit 的响应。
 pub fn fluent_input(ui: &mut Ui, t: &Theme, label: &str, text: &mut String, error: bool) -> Response {
     ui.label(egui::RichText::new(label).size(font::AUX).color(t.subtext));
-    ui.add_space(3.0);
+    ui.add_space(5.0);
     let width = ui.available_width();
     let (rect, box_resp) =
         ui.allocate_exact_size(Vec2::new(width, metrics::INPUT_H), Sense::click());

@@ -308,7 +308,11 @@ fn user_row(ui: &mut Ui, t: &Theme, u: &User, speaking: bool) {
         );
     }
     // 头像圆
-    let av_c = egui::pos2(rect.left() + metrics::USER_ROW_LEFT - 12.0, rect.center().y);
+    // 设计稿：头像左缘缩进 26（padding-left），头像 20 宽，昵称再留 8 间隙
+    let av_c = egui::pos2(
+        rect.left() + metrics::USER_ROW_LEFT + metrics::AVATAR / 2.0,
+        rect.center().y,
+    );
     ui.painter().circle_filled(av_c, metrics::AVATAR / 2.0, t.chip);
     let ch = u.name.chars().next().map(|c| c.to_string()).unwrap_or_default();
     let ch_g = ui
@@ -340,7 +344,7 @@ fn user_row(ui: &mut Ui, t: &Theme, u: &User, speaking: bool) {
         .painter()
         .layout_job(job); // TODO: 若无此 API 换 fonts.layout_job
     ui.painter().galley(
-        egui::pos2(av_c.x + metrics::AVATAR / 2.0 + 7.0, rect.center().y - name_g.size().y / 2.0),
+        egui::pos2(av_c.x + metrics::AVATAR / 2.0 + 8.0, rect.center().y - name_g.size().y / 2.0),
         name_g,
         t.text,
     );
@@ -535,7 +539,8 @@ fn msg_layout(t: &Theme, m: &ChatMsg) -> egui::text::LayoutJob {
     } else {
         TextFormat::simple(FontId::proportional(font::CTRL_ROW), t.text)
     };
-    job.append(&m.body, 0.0, body_fmt.into());
+    // 设计稿：昵称 marginRight 6 → 正文前留 6px
+    job.append(&m.body, 6.0, body_fmt.into());
     job
 }
 
@@ -636,6 +641,7 @@ fn bottom_bar(
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }
 
+        ui.add_space(12.0);
         ui.label(
             egui::RichText::new("延迟 32ms").size(font::AUX).color(t.subtext),
         );

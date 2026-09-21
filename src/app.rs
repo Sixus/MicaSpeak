@@ -87,6 +87,10 @@ impl MicaApp {
     pub fn new(cc: &eframe::CreationContext) -> Self {
         let dark = cc.egui_ctx.theme() == egui::Theme::Dark;
         let mica = window_vibrancy::apply_mica(cc, Some(dark)).is_ok();
+        // 设计稿间距全部由代码显式控制（add_space=设计值），关掉 egui 默认
+        // item_spacing 防止与 add_space 叠加导致所有间隙偏大。
+        cc.egui_ctx
+            .all_styles_mut(|s| s.spacing.item_spacing = egui::Vec2::ZERO);
         let mut app = MicaApp {
             mica,
             view: View::Connect,
@@ -199,15 +203,19 @@ impl MicaApp {
                     if demo_pill(ui, t, theme_label, false).clicked() {
                         cycle_theme = true;
                     }
+                    ui.add_space(6.0);
                     if demo_pill(ui, t, "悬浮", overlay_open).clicked() {
                         overlay_open = !overlay_open;
                     }
+                    ui.add_space(6.0);
                     if demo_pill(ui, t, "断线", self.demo.disconnected).clicked() {
                         toggle_disconnect = true;
                     }
+                    ui.add_space(6.0);
                     if demo_pill(ui, t, "说话", !self.demo.speakers.is_empty()).clicked() {
                         cycle_speaking = true;
                     }
+                    ui.add_space(6.0);
                     if demo_pill(ui, t, "设置窗", settings_open).clicked() {
                         settings_open = !settings_open;
                     }
@@ -310,19 +318,25 @@ impl MicaApp {
                         let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
                         paint_logo(ui, rect);
                         ui.add_space(11.0);
-                        ui.vertical(|ui| {
-                            ui.label(
-                                egui::RichText::new("MicaSpeak")
-                                    .size(font::APP_NAME)
-                                    .strong()
-                                    .color(t.text),
-                            );
-                            ui.label(
-                                egui::RichText::new("轻量 TeamSpeak 客户端")
-                                    .size(font::AUX)
-                                    .color(t.subtext),
-                            );
-                        });
+                        // 标题两行堆叠：horizontal 内嵌套 vertical 不会换行（0.36 实测），
+                        // 必须显式给纵向布局的子区域
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(ui.available_width().min(240.0), 44.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.label(
+                                    egui::RichText::new("MicaSpeak")
+                                        .size(font::APP_NAME)
+                                        .strong()
+                                        .color(t.text),
+                                );
+                                ui.label(
+                                    egui::RichText::new("轻量 TeamSpeak 客户端")
+                                        .size(font::AUX)
+                                        .color(t.subtext),
+                                );
+                            },
+                        );
                     });
                     ui.add_space(18.0);
                     w::fluent_input(ui, t, "服务器地址", &mut addr, connect_error);

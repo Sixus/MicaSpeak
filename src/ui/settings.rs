@@ -352,7 +352,7 @@ fn toggle_row(ui: &mut Ui, t: &Theme, title: &str, sub: &str, value: &mut bool) 
 
 fn dropdown_row(ui: &mut Ui, t: &Theme, label: &str, value: &str) {
     ui.label(egui::RichText::new(label).size(font::AUX).color(t.subtext));
-    ui.add_space(3.0);
+    ui.add_space(5.0);
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), metrics::INPUT_H), Sense::click());
     let bg = if resp.hovered() { t.hover } else { t.input_bg };

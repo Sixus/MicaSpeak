@@ -5,11 +5,15 @@ using System;
 using System.Runtime.InteropServices;
 public class Win32 {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
   public struct RECT { public int Left, Top, Right, Bottom; }
 }
 "@
 $p = Get-Process micaspeak -ErrorAction Stop | Select-Object -First 1
 if ($p -eq $null -or $p.MainWindowHandle -eq 0) { Write-Error "no window"; exit 1 }
+[Win32]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+Start-Sleep -Milliseconds 600
 $rect = New-Object Win32+RECT
 [Win32]::GetWindowRect($p.MainWindowHandle, [ref]$rect) | Out-Null
 $w = $rect.Right - $rect.Left; $h = $rect.Bottom - $rect.Top
