@@ -2,6 +2,7 @@
 //! MD2 界面先行阶段：数据全为假数据，演示开关即未来真功能的接线口。
 use crate::theme::{colors, font, metrics, Theme};
 use crate::ui::icons::{self as icons, Icon};
+use crate::ui::overlay;
 use crate::ui::settings;
 use crate::ui::main_window;
 use crate::ui::widgets::{self as w};
@@ -25,6 +26,10 @@ pub struct Demo {
     pub reconnecting: bool,
     pub overlay_open: bool,
     pub settings_open: bool,
+    /// 断线开始时刻（ctx.time，秒）——倒计时用
+    pub disconnect_at: f64,
+    /// 立即重连点击时刻；Some 期间显示重连遮罩，~1.6s 后演示恢复
+    pub reconnect_started: Option<f64>,
 }
 
 pub struct Bookmark {
@@ -128,6 +133,11 @@ impl MicaApp {
                 self.view = View::Main;
                 self.demo.overlay_open = true;
             }
+            "overlay-speaking" => {
+                self.view = View::Main;
+                self.demo.overlay_open = true;
+                self.demo.speakers = vec!["张三", "李四"];
+            }
             "error" => {
                 self.view = View::Connect;
                 self.connect_error = true;
@@ -228,8 +238,17 @@ impl MicaApp {
             self.cycle_speaking();
         }
         if toggle_disconnect {
-            self.demo.disconnected = !self.demo.disconnected;
-            self.demo.reconnecting = self.demo.disconnected;
+            if self.demo.disconnected {
+                // 再点一次 = 手动恢复
+                self.demo.disconnected = false;
+                self.demo.reconnecting = false;
+                self.demo.reconnect_started = None;
+            } else {
+                self.demo.disconnected = true;
+                self.demo.reconnecting = true;
+                self.demo.disconnect_at = ui.ctx().time();
+                self.demo.reconnect_started = None;
+            }
         }
         self.demo.overlay_open = overlay_open;
         self.demo.settings_open = settings_open;
@@ -390,11 +409,44 @@ impl MicaApp {
         let ctrl_held = ui.input(|i| i.modifiers.ctrl);
         let ptt = self.demo.ptt_held || ctrl_held;
         let speakers = self.demo.speakers.clone();
-        let disconnected = self.demo.disconnected;
+        let now = ui.ctx().time();
+
+        // 断线状态机：倒计时 → 自动重连遮罩 ~1.6s → 恢复（演示）
+        let mut countdown: Option<u32> = None;
+        if self.demo.disconnected {
+            let remain = 10.0 - (now - self.demo.disconnect_at);
+            if self.demo.reconnect_started.is_none() && remain <= 0.0 {
+                self.demo.reconnect_started = Some(now);
+            }
+            countdown = Some(remain.clamp(0.0, 10.0).ceil() as u32);
+            if let Some(t0) = self.demo.reconnect_started {
+                if now - t0 >= 1.6 {
+                    self.demo.disconnected = false;
+                    self.demo.reconnecting = false;
+                    self.demo.reconnect_started = None;
+                }
+            }
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+        }
+        let reconnecting = self.demo.reconnecting;
         let mut gear = false;
-        main_window::show(ui, t, &mut self.main, &speakers, ptt, disconnected, &mut gear);
+        let mut reconnect_clicked = false;
+        main_window::show(
+            ui,
+            t,
+            &mut self.main,
+            &speakers,
+            ptt,
+            countdown,
+            reconnecting,
+            &mut gear,
+            &mut reconnect_clicked,
+        );
         if gear {
             self.demo.settings_open = true;
+        }
+        if reconnect_clicked && self.demo.reconnect_started.is_none() {
+            self.demo.reconnect_started = Some(now);
         }
     }
 
@@ -464,6 +516,42 @@ impl eframe::App for MicaApp {
                 |ui, _class| app.settings_window(ui),
             );
         }
+
+        // 悬浮窗（独立置顶 viewport，260×80 深色胶囊）
+        if self.demo.overlay_open {
+            let speakers: Vec<String> = self
+                .demo
+                .speakers
+                .iter()
+                .map(|s| if *s == "李四" { "李四 (我)".to_owned() } else { s.to_string() })
+                .collect();
+            let app = &mut *self;
+            ui.ctx().show_viewport_immediate(
+                egui::ViewportId::from_hash_of("overlay"),
+                egui::ViewportBuilder::default()
+                    .with_title("MicaSpeak 悬浮窗")
+                    .with_inner_size([260.0, 80.0])
+                    .with_decorations(false)
+                    .with_transparent(true)
+                    .with_always_on_top()
+                    .with_resizable(false),
+                |ui, _class| app.overlay_window(ui, &speakers),
+            );
+        }
+    }
+}
+
+impl MicaApp {
+    /// 悬浮窗 viewport 内容。
+    fn overlay_window(&mut self, ui: &mut egui::Ui, speakers: &[String]) {
+        if ui.input(|i| i.viewport().close_requested()) {
+            self.demo.overlay_open = false;
+        }
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(Color32::TRANSPARENT))
+            .show(ui, |ui| {
+                overlay::show(ui, speakers);
+            });
     }
 }
 

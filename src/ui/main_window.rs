@@ -3,7 +3,7 @@
 use crate::theme::{colors, font, metrics, Theme};
 use crate::ui::icons::{self as icons, Icon};
 use crate::ui::widgets::{self as w, DotKind};
-use eframe::egui::{self, Color32, CornerRadius, FontId, Rect, Sense, Stroke, StrokeKind, TextFormat, Ui, Vec2};
+use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextFormat, Ui, Vec2};
 
 pub struct User {
     pub name: String,
@@ -81,9 +81,13 @@ pub fn show(
     st: &mut MainState,
     speakers: &[&'static str],
     ptt_held: bool,
-    disconnected: bool,
+    countdown: Option<u32>,
+    reconnecting: bool,
     gear_clicked: &mut bool,
+    reconnect_clicked: &mut bool,
 ) {
+    let full = ui.max_rect();
+    let is_disconnected = countdown.is_some();
     // ---- 顶栏 ----
     egui::Panel::top("main_topbar")
         .exact_size(28.0)
@@ -96,7 +100,7 @@ pub fn show(
                 w::status_dot(
                     ui,
                     r.center(),
-                    if disconnected { DotKind::Yellow } else { DotKind::Green },
+                    if is_disconnected { DotKind::Yellow } else { DotKind::Green },
                 );
                 ui.add_space(9.0);
                 ui.label(
@@ -135,7 +139,7 @@ pub fn show(
         }))
         .show_separator_line(false)
         .show(ui, |ui| {
-            bottom_bar(ui, t, st, ptt_held, disconnected);
+            bottom_bar(ui, t, ptt_held, countdown, reconnect_clicked);
         });
 
     // ---- 主体：频道树 | 聊天 ----
@@ -188,6 +192,40 @@ pub fn show(
                 );
             });
         });
+
+    // ---- 重连遮罩（断线态最上层）----
+    if reconnecting {
+        ui.painter().rect_filled(full, CornerRadius::same(0), t.scrim);
+        let card_size = Vec2::new(330.0, 60.0);
+        let card_rect = Rect::from_center_size(full.center(), card_size);
+        ui.painter().rect(
+            card_rect,
+            CornerRadius::same(metrics::RADIUS_CARD as u8),
+            t.card,
+            Stroke::new(1.0, t.border),
+            StrokeKind::Inside,
+        );
+        let spinner_c = egui::pos2(card_rect.left() + 24.0, card_rect.center().y);
+        icons::draw_spinner(
+            ui.painter(),
+            spinner_c,
+            20.0,
+            colors::BLUE,
+            ui.ctx().time(),
+        );
+        let galley = ui.painter().layout(
+            "连接已断开，正在尝试恢复…".to_owned(),
+            FontId::proportional(font::BODY),
+            t.text,
+            f32::INFINITY,
+        );
+        ui.painter().galley(
+            Pos2::new(card_rect.left() + 44.0, card_rect.center().y - galley.size().y / 2.0),
+            galley,
+            t.text,
+        );
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(40));
+    }
 }
 
 // ---------- 频道树 ----------
@@ -482,20 +520,26 @@ fn msg_layout(t: &Theme, m: &ChatMsg) -> egui::text::LayoutJob {
 
 // ---------- 底部状态栏 ----------
 
-fn bottom_bar(ui: &mut Ui, t: &Theme, st: &MainState, ptt_held: bool, disconnected: bool) {
+fn bottom_bar(
+    ui: &mut Ui,
+    t: &Theme,
+    ptt_held: bool,
+    countdown: Option<u32>,
+    reconnect_clicked: &mut bool,
+) {
     ui.horizontal_centered(|ui| {
-        if disconnected {
+        if let Some(secs) = countdown {
             ui.label(
-                egui::RichText::new("已断开 · 10 秒后自动重连")
+                egui::RichText::new(format!("已断开 · {secs} 秒后自动重连"))
                     .size(font::AUX)
                     .color(t.subtext),
             );
             ui.allocate_ui_with_layout(
-                Vec2::new(ui.available_width() - 90.0, 26.0),
+                Vec2::new(ui.available_width().max(4.0) - 90.0, 26.0),
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
                     if w::secondary_button(ui, t, "立即重连", metrics::BTN_SMALL_H).clicked() {
-                        // MD2e 接入重连视觉
+                        *reconnect_clicked = true;
                     }
                 },
             );
@@ -575,7 +619,6 @@ fn bottom_bar(ui: &mut Ui, t: &Theme, st: &MainState, ptt_held: bool, disconnect
             egui::RichText::new("延迟 32ms").size(font::AUX).color(t.subtext),
         );
     });
-    let _ = st;
 }
 
 fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
