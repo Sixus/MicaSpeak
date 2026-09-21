@@ -2,6 +2,7 @@
 //! MD2 界面先行阶段：数据全为假数据，演示开关即未来真功能的接线口。
 use crate::theme::{colors, font, metrics, Theme};
 use crate::ui::icons::{self as icons, Icon};
+use crate::ui::settings;
 use crate::ui::main_window;
 use crate::ui::widgets::{self as w};
 use eframe::egui::{self, Color32, CornerRadius, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
@@ -73,6 +74,7 @@ pub struct MicaApp {
     pub demo: Demo,
     pub connect: ConnectState,
     pub main: main_window::MainState,
+    pub settings: crate::ui::settings::SettingsState,
     mica_dark: Option<bool>,
 }
 
@@ -88,6 +90,7 @@ impl MicaApp {
             demo: Demo::default(),
             connect: ConnectState::with_demo_data(),
             main: main_window::MainState::with_demo_data(),
+            settings: Default::default(),
             mica_dark: if mica { Some(dark) } else { None },
         };
         app.apply_env_state(&cc.egui_ctx);
@@ -118,7 +121,7 @@ impl MicaApp {
                 self.demo.reconnecting = true;
             }
             "settings" => {
-                self.view = View::Main;
+                
                 self.demo.settings_open = true;
             }
             "overlay" => {
@@ -345,7 +348,7 @@ impl MicaApp {
                                 }
                             });
                         });
-                        if text_link(ui, t, "＋ 存为书签") {
+                        if w::text_link(ui, "＋ 存为书签") {
                             action = ConnectAction::Add;
                         }
                     },
@@ -446,6 +449,66 @@ impl eframe::App for MicaApp {
         w::paint_window_fallback(ui, t);
         self.caption_bar(ui, t);
         self.body(ui, t);
+
+        // 设置窗口（独立 viewport，520×640）
+        if self.demo.settings_open {
+            let app = &mut *self;
+            ui.ctx().show_viewport_immediate(
+                egui::ViewportId::from_hash_of("settings"),
+                egui::ViewportBuilder::default()
+                    .with_title("MicaSpeak 设置")
+                    .with_inner_size([520.0, 640.0])
+                    .with_min_inner_size([440.0, 480.0])
+                    .with_decorations(false)
+                    .with_transparent(true),
+                |ui, _class| app.settings_window(ui),
+            );
+        }
+    }
+}
+
+impl MicaApp {
+    /// 设置 viewport 内容：关闭处理 + 窗口骨架 + 左栏/右页。
+    fn settings_window(&mut self, ui: &mut egui::Ui) {
+        if ui.input(|i| i.viewport().close_requested()) {
+            self.demo.settings_open = false;
+        }
+        let t = Theme::pick(ui.ctx().theme() == egui::Theme::Dark);
+        w::paint_window_fallback(ui, t);
+
+        // 标题栏：拖动区 + 窗控钮（设置窗无演示胶囊）
+        egui::Panel::top("settings_caption")
+            .exact_size(metrics::CAPTION_H)
+            .frame(egui::Frame::new())
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let buttons_w = 3.0 * metrics::CAPTION_BTN.x + 2.0 * 8.0;
+                    let full = ui.available_rect_before_wrap();
+                    let drag_rect = egui::Rect::from_min_max(
+                        full.min,
+                        egui::pos2(full.right() - buttons_w, full.bottom()),
+                    );
+                    let drag = ui.allocate_rect(drag_rect, Sense::drag());
+                    if drag.drag_started() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                    }
+                    if drag.double_clicked() {
+                        let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                    }
+                    caption_buttons(ui, t);
+                });
+            });
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(Color32::TRANSPARENT))
+            .show(ui, |ui| {
+                ui.add_space(4.0);
+                ui.set_height(ui.available_height());
+                settings::show(ui, t, &mut self.settings);
+            });
     }
 }
 
@@ -512,20 +575,6 @@ fn bookmark_row(ui: &mut Ui, t: &Theme, idx: usize, name: &str, addr: &str) -> O
     None
 }
 
-/// 蓝色文字链接按钮（＋ 存为书签 等）。
-fn text_link(ui: &mut Ui, _t: &Theme, label: &str) -> bool {
-    let galley = ui
-        .painter()
-        .layout(label.to_owned(), egui::FontId::proportional(font::CTRL_ROW), colors::BLUE, f32::INFINITY);
-    let (rect, resp) =
-        ui.allocate_exact_size(galley.size() + Vec2::new(8.0, 6.0), Sense::click());
-    ui.painter().galley(
-        egui::pos2(rect.left() + 4.0, rect.center().y - galley.size().y / 2.0),
-        galley,
-        colors::BLUE,
-    );
-    resp.clicked()
-}
 
 
 /// 演示开关小胶囊（MD2 阶段专用，接线时整体移除）。

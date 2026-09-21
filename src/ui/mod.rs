@@ -3,3 +3,4 @@
 pub mod icons;
 pub mod widgets;
 pub mod main_window;
+pub mod settings;

@@ -193,3 +193,17 @@ fn lerp_rgb(a: Color32, b: Color32, t: f32) -> Color32 {
         (a.b() as f32 + (b.b() as f32 - a.b() as f32) * t) as u8,
     )
 }
+
+/// 蓝色文字链接按钮（＋ 存为书签 / 恢复默认设置 等）。
+pub fn text_link(ui: &mut Ui, label: &str) -> bool {
+    let galley = ui
+        .painter()
+        .layout(label.to_owned(), FontId::proportional(font::CTRL_ROW), colors::BLUE, f32::INFINITY);
+    let (rect, resp) = ui.allocate_exact_size(galley.size() + Vec2::new(8.0, 6.0), Sense::click());
+    ui.painter().galley(
+        Pos2::new(rect.left() + 4.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        colors::BLUE,
+    );
+    resp.clicked()
+}
