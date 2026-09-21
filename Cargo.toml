@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 eframe = { version = "=0.36.2" }
+window-vibrancy = "0.8.0"
 
 [profile.release]
 strip = true
