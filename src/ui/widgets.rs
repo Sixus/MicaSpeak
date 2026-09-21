@@ -43,7 +43,7 @@ pub fn status_dot(ui: &Ui, pos: Pos2, kind: DotKind) {
 }
 
 /// 内容卡片：86% 不透明、8px 圆角、1px 描边。调用方给内边距。
-pub fn card(t: &Theme, pad: impl Into<Margin>) -> egui::Frame {
+pub fn card(t: &Theme, pad: Margin) -> egui::Frame {
     egui::Frame::new()
         .fill(t.card)
         .stroke(Stroke::new(1.0, t.border))
@@ -51,35 +51,53 @@ pub fn card(t: &Theme, pad: impl Into<Margin>) -> egui::Frame {
         .inner_margin(pad)
 }
 
-/// Fluent 单行输入框：34px 高、5px 圆角、2px 加粗下边线；error 时红。
-/// 返回 TextEdit 的响应。
+/// Fluent 单行输入框：34px 高、5px 圆角、2px 加粗下边线；error 红；聚焦变蓝。
+/// 点击框内空白也能聚焦输入区。返回 TextEdit 的响应。
 pub fn fluent_input(ui: &mut Ui, t: &Theme, label: &str, text: &mut String, error: bool) -> Response {
     ui.label(egui::RichText::new(label).size(font::AUX).color(t.subtext));
-    ui.add_space(2.0);
+    ui.add_space(3.0);
     let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, metrics::INPUT_H), Sense::hover());
+    let (rect, box_resp) =
+        ui.allocate_exact_size(Vec2::new(width, metrics::INPUT_H), Sense::click());
     let border = if error { colors::RED } else { t.input_border };
-    let bottom = if error { colors::RED } else { t.input_bottom };
-    ui.painter()
-        .rect(rect, CornerRadius::same(metrics::RADIUS_CTRL as u8), t.input_bg, Stroke::new(1.0, border), StrokeKind::Inside);
-    // 加粗下边线（贴着圆角底边，内缩 1px）
+    ui.painter().rect(
+        rect,
+        CornerRadius::same(metrics::RADIUS_CTRL as u8),
+        t.input_bg,
+        Stroke::new(1.0, border),
+        StrokeKind::Inside,
+    );
+
+    let inner_w = (rect.width() - 20.0).max(20.0);
+    let inner = Rect::from_min_size(
+        Pos2::new(rect.left() + 10.0, rect.center().y - 11.0),
+        Vec2::new(inner_w, 22.0),
+    );
+    let edit = egui::TextEdit::singleline(text)
+        .frame(egui::Frame::new())
+        .desired_width(inner_w)
+        .font(FontId::proportional(font::BODY))
+        .text_color(t.text)
+        .vertical_align(egui::Align::Center);
+    let edit_resp = ui.put(inner, edit);
+
+    // 加粗下边线：常态灰、聚焦蓝、错误红（在文字之后画，位于框底不压字）
+    let bottom = if error {
+        colors::RED
+    } else if edit_resp.has_focus() {
+        colors::BLUE
+    } else {
+        t.input_bottom
+    };
     let band = Rect::from_min_max(
         Pos2::new(rect.left() + 1.0, rect.bottom() - 3.0),
         Pos2::new(rect.right() - 1.0, rect.bottom() - 1.0),
     );
     ui.painter().rect_filled(band, CornerRadius::same(1), bottom);
-
-    let inner = Rect::from_min_size(
-        Pos2::new(rect.left() + 10.0, rect.top()),
-        Vec2::new((rect.width() - 20.0).max(20.0), rect.height()),
-    );
-    let edit = egui::TextEdit::singleline(text)
-        .frame(egui::Frame::new())
-        .desired_width(inner.width())
-        .font(FontId::proportional(font::BODY))
-        .text_color(t.text)
-        .vertical_align(egui::Align::Center);
-    ui.put(inner, edit)
+    if box_resp.clicked() {
+        edit_resp.request_focus();
+    }
+    edit_resp
 }
 
 /// 大号蓝色主按钮（连接 / 发送等），占满可用宽。

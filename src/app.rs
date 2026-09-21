@@ -25,6 +25,42 @@ pub struct Demo {
     pub settings_open: bool,
 }
 
+pub struct Bookmark {
+    pub name: String,
+    pub addr: String,
+}
+
+#[derive(Default)]
+pub struct ConnectState {
+    pub addr: String,
+    pub nick: String,
+    pub bookmarks: Vec<Bookmark>,
+}
+
+impl ConnectState {
+    fn with_demo_data() -> Self {
+        ConnectState {
+            addr: "voice.kaihei.gg:9987".into(),
+            nick: "李四".into(),
+            bookmarks: vec![
+                Bookmark { name: "开黑联盟".into(), addr: "voice.kaihei.gg:9987".into() },
+                Bookmark { name: "深夜电台".into(), addr: "ts.midnight-radio.net".into() },
+                Bookmark { name: "设计小组".into(), addr: "10.0.4.21:9987".into() },
+            ],
+        }
+    }
+}
+
+/// 连接页交互动作（帧内收集、帧末统一应用）。
+#[derive(Clone, Copy, PartialEq)]
+enum ConnectAction {
+    None,
+    Connect,
+    ConnectBookmark(usize),
+    Delete(usize),
+    Add,
+}
+
 pub struct MicaApp {
     /// Mica 是否成功应用（false = Win10 回退渐变底）
     pub mica: bool,
@@ -34,6 +70,7 @@ pub struct MicaApp {
     /// None = 跟随系统（默认），演示开关可覆盖
     theme_pref: Option<egui::ThemePreference>,
     pub demo: Demo,
+    pub connect: ConnectState,
     mica_dark: Option<bool>,
 }
 
@@ -47,6 +84,7 @@ impl MicaApp {
             connect_error: false,
             theme_pref: None,
             demo: Demo::default(),
+            connect: ConnectState::with_demo_data(),
             mica_dark: if mica { Some(dark) } else { None },
         };
         app.apply_env_state(&cc.egui_ctx);
@@ -205,7 +243,140 @@ impl MicaApp {
     // ---------- 各屏（MD2b/MD2c 替换为正式实现） ----------
 
     fn connect_page(&mut self, ui: &mut egui::Ui, t: &Theme) {
-        self.placeholder(ui, t, "01-连接页（MD2b 实现）");
+        // 底部状态行：灰点 + 未连接
+        egui::Panel::bottom("connect_status")
+            .exact_size(26.0)
+            .frame(egui::Frame::new())
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
+                    w::status_dot(ui, r.center(), w::DotKind::Gray);
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new("未连接").size(font::AUX).color(t.subtext));
+                });
+            });
+
+        // 数据取出为局部变量，避免嵌套闭包多借用 self
+        let mut addr = std::mem::take(&mut self.connect.addr);
+        let mut nick = std::mem::take(&mut self.connect.nick);
+        let bookmarks: Vec<(String, String)> = self
+            .connect
+            .bookmarks
+            .iter()
+            .map(|b| (b.name.clone(), b.addr.clone()))
+            .collect();
+        let connect_error = self.connect_error;
+        let mut action = ConnectAction::None;
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().inner_margin(egui::Margin {
+                left: 12,
+                right: 12,
+                top: 6,
+                bottom: 8,
+            }))
+            .show(ui, |ui| {
+                // --- 身份与连接卡片 ---
+                w::card(t, egui::Margin::same(20)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
+                        paint_logo(ui, rect);
+                        ui.add_space(11.0);
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new("MicaSpeak")
+                                    .size(font::APP_NAME)
+                                    .strong()
+                                    .color(t.text),
+                            );
+                            ui.label(
+                                egui::RichText::new("轻量 TeamSpeak 客户端")
+                                    .size(font::AUX)
+                                    .color(t.subtext),
+                            );
+                        });
+                    });
+                    ui.add_space(18.0);
+                    w::fluent_input(ui, t, "服务器地址", &mut addr, connect_error);
+                    ui.add_space(12.0);
+                    w::fluent_input(ui, t, "昵称", &mut nick, false);
+                    ui.add_space(16.0);
+                    if w::primary_button(ui, "连接", metrics::BTN_PRIMARY_H).clicked() {
+                        action = ConnectAction::Connect;
+                    }
+                    if connect_error {
+                        ui.add_space(10.0);
+                        ui.label(
+                            egui::RichText::new("连接失败：地址无法解析，请检查服务器地址")
+                                .size(font::AUX)
+                                .color(colors::RED),
+                        );
+                    }
+                });
+
+                ui.add_space(12.0);
+
+                // --- 书签卡片（占满剩余高度）---
+                let card_h = ui.available_height();
+                w::card(t, egui::Margin { left: 6, right: 6, top: 12, bottom: 8 }).show(
+                    ui,
+                    |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.set_height(card_h);
+                        ui.label(
+                            egui::RichText::new("书签").size(font::SECTION).strong().color(t.faint),
+                        );
+                        ui.add_space(6.0);
+                        let link_h = 30.0;
+                        let scroll_h = (ui.available_height() - link_h).max(40.0);
+                        ui.allocate_ui(Vec2::new(ui.available_width(), scroll_h), |ui| {
+                            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                for (i, (name, baddr)) in bookmarks.iter().enumerate() {
+                                    if let Some(a) = bookmark_row(ui, t, i, name, baddr) {
+                                        action = a;
+                                    }
+                                }
+                            });
+                        });
+                        if text_link(ui, t, "＋ 存为书签") {
+                            action = ConnectAction::Add;
+                        }
+                    },
+                );
+            });
+
+        // 写回状态并应用动作（演示：连接=切主窗口；接线时换成真连接）
+        self.connect.addr = addr;
+        self.connect.nick = nick;
+        match action {
+            ConnectAction::None => {}
+            ConnectAction::Connect | ConnectAction::ConnectBookmark(_) => {
+                if let ConnectAction::ConnectBookmark(i) = action {
+                    if let Some(b) = self.connect.bookmarks.get(i) {
+                        self.connect.addr = b.addr.clone();
+                    }
+                }
+                self.connect_error = false;
+                self.view = View::Main;
+            }
+            ConnectAction::Delete(i) => {
+                self.connect.bookmarks.remove(i);
+            }
+            ConnectAction::Add => {
+                let name = self
+                    .connect
+                    .addr
+                    .split(':')
+                    .next()
+                    .unwrap_or("服务器")
+                    .to_owned();
+                self.connect.bookmarks.push(Bookmark { name, addr: self.connect.addr.clone() });
+            }
+        }
     }
 
     fn main_page(&mut self, ui: &mut egui::Ui, t: &Theme) {
@@ -220,7 +391,7 @@ impl MicaApp {
         let (mica, ptt, err) = (self.mica, self.demo.ptt_held, self.connect_error);
 
         ui.add_space(24.0);
-        w::card(t, 20).show(ui, |ui| {
+        w::card(t, egui::Margin::same(20)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(egui::RichText::new(title).size(16.0).strong().color(t.text));
             ui.add_space(8.0);
@@ -266,7 +437,84 @@ impl eframe::App for MicaApp {
     }
 }
 
-// ---------- 标题栏部件 ----------
+// ---------- 连接页部件 ----------
+
+/// 40×40 蓝色圆角 logo 盒 + 白色麦克风图标。
+/// 设计稿为 150° 渐变（#0078D4→#2FA1F0），40px 尺寸下纯色观感一致。
+fn paint_logo(ui: &Ui, rect: Rect) {
+    ui.painter().rect(rect, CornerRadius::same(10), colors::BLUE, Stroke::NONE, StrokeKind::Inside);
+    icons::draw(ui.painter(), rect.center(), 20.0, Icon::Mic, colors::WHITE);
+}
+
+/// 书签行：名称 + 地址两行、整行 hover、双击连接、右侧 × 删除。
+fn bookmark_row(ui: &mut Ui, t: &Theme, idx: usize, name: &str, addr: &str) -> Option<ConnectAction> {
+    let h = 46.0;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect(
+            rect,
+            CornerRadius::same(metrics::RADIUS_CTRL as u8),
+            colors::ROW_HOVER,
+            Stroke::NONE,
+            StrokeKind::Inside,
+        );
+    }
+    let name_g = ui
+        .painter()
+        .layout(name.to_owned(), egui::FontId::proportional(font::BODY), t.text, f32::INFINITY);
+    let addr_g = ui
+        .painter()
+        .layout(addr.to_owned(), egui::FontId::proportional(font::SMALL), t.subtext, f32::INFINITY);
+    ui.painter().galley(egui::pos2(rect.left() + 12.0, rect.top() + 6.0), name_g, t.text);
+    ui.painter()
+        .galley(egui::pos2(rect.left() + 12.0, rect.top() + 25.0), addr_g, t.subtext);
+
+    // 删除 ×（右侧 26×26 热区）
+    let x_rect = Rect::from_center_size(
+        egui::pos2(rect.right() - 21.0, rect.center().y),
+        Vec2::splat(26.0),
+    );
+    let x_resp = ui.interact(x_rect, ui.id().with("bm_del").with(idx), Sense::click());
+    if x_resp.hovered() {
+        ui.painter().rect(
+            x_rect,
+            CornerRadius::same(metrics::RADIUS_CTRL as u8),
+            colors::ROW_HOVER,
+            Stroke::NONE,
+            StrokeKind::Inside,
+        );
+    }
+    icons::draw(
+        ui.painter(),
+        x_rect.center(),
+        14.0,
+        Icon::X,
+        if x_resp.hovered() { t.text } else { t.faint },
+    );
+    if x_resp.clicked() {
+        return Some(ConnectAction::Delete(idx));
+    }
+    if resp.double_clicked() {
+        return Some(ConnectAction::ConnectBookmark(idx));
+    }
+    None
+}
+
+/// 蓝色文字链接按钮（＋ 存为书签 等）。
+fn text_link(ui: &mut Ui, _t: &Theme, label: &str) -> bool {
+    let galley = ui
+        .painter()
+        .layout(label.to_owned(), egui::FontId::proportional(font::CTRL_ROW), colors::BLUE, f32::INFINITY);
+    let (rect, resp) =
+        ui.allocate_exact_size(galley.size() + Vec2::new(8.0, 6.0), Sense::click());
+    ui.painter().galley(
+        egui::pos2(rect.left() + 4.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        colors::BLUE,
+    );
+    resp.clicked()
+}
+
 
 /// 演示开关小胶囊（MD2 阶段专用，接线时整体移除）。
 fn demo_pill(ui: &mut Ui, t: &Theme, label: &str, active: bool) -> Response {
