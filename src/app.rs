@@ -2,6 +2,7 @@
 //! MD2 界面先行阶段：数据全为假数据，演示开关即未来真功能的接线口。
 use crate::theme::{colors, font, metrics, Theme};
 use crate::ui::icons::{self as icons, Icon};
+use crate::ui::main_window;
 use crate::ui::widgets::{self as w};
 use eframe::egui::{self, Color32, CornerRadius, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
 
@@ -71,6 +72,7 @@ pub struct MicaApp {
     theme_pref: Option<egui::ThemePreference>,
     pub demo: Demo,
     pub connect: ConnectState,
+    pub main: main_window::MainState,
     mica_dark: Option<bool>,
 }
 
@@ -85,6 +87,7 @@ impl MicaApp {
             theme_pref: None,
             demo: Demo::default(),
             connect: ConnectState::with_demo_data(),
+            main: main_window::MainState::with_demo_data(),
             mica_dark: if mica { Some(dark) } else { None },
         };
         app.apply_env_state(&cc.egui_ctx);
@@ -380,7 +383,16 @@ impl MicaApp {
     }
 
     fn main_page(&mut self, ui: &mut egui::Ui, t: &Theme) {
-        self.placeholder(ui, t, "02-主窗口（MD2c 实现）");
+        // 窗口内按住 Ctrl = PTT 演示（M3 换成全局热键）
+        let ctrl_held = ui.input(|i| i.modifiers.ctrl);
+        let ptt = self.demo.ptt_held || ctrl_held;
+        let speakers = self.demo.speakers.clone();
+        let disconnected = self.demo.disconnected;
+        let mut gear = false;
+        main_window::show(ui, t, &mut self.main, &speakers, ptt, disconnected, &mut gear);
+        if gear {
+            self.demo.settings_open = true;
+        }
     }
 
     fn placeholder(&mut self, ui: &mut egui::Ui, t: &Theme, title: &str) {
