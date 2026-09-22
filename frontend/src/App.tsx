@@ -219,7 +219,8 @@ export default function App() {
 
   if (runtimeMissing || (started && !snapshot.runtime_available)) return <RuntimeMissing />
   if (!started) return <main className="loading-page"><div className="loader" /><span>正在启动 MicaSpeak…</span></main>
-  if (!connected) return <ConnectForm snapshot={snapshot} onConnect={connect} onConnectBookmark={(b) => void connectBookmark(b)} onSave={save} onDelete={(id) => void removeBookmark(id)} />
+  const noticeEl = notice ? <div className="notice">{notice}</div> : null
+  if (!connected) return <>{noticeEl}<ConnectForm snapshot={snapshot} onConnect={connect} onConnectBookmark={(b) => void connectBookmark(b)} onSave={save} onDelete={(id) => void removeBookmark(id)} /></>
   return (
     <main className="app-shell">
       <header className="topbar"><div className={`status-dot ${snapshot.connection.status}`} /><div className="server-title"><strong>{snapshot.connection.server_name || 'TS3 服务器'}</strong><span>{snapshot.connection.server_address}</span></div><span className="status-text">{statusText(snapshot)}</span><button className="icon-button" onClick={() => setSettingsOpen(true)} aria-label="打开设置">⚙</button><button className="icon-button" onClick={() => void disconnect()} aria-label="断开连接">×</button></header>
@@ -235,7 +236,7 @@ export default function App() {
           onCancel={() => { setPwdPrompt(null); setPwdError('') }}
         />
       )}
-      {notice && <div className="notice">{notice}</div>}
+      {noticeEl}
     </main>
   )
 }
