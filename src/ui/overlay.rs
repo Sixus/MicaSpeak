@@ -7,7 +7,10 @@ use crate::theme::{colors, font, metrics};
 use crate::ui::icons::{self as icons, Icon};
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, StrokeKind, Ui, Vec2};
 
-pub const PILL: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 178); // 0.70
+// DX12/wgpu does not composite premultiplied alpha for transparent viewports
+// reliably. Use the prototype's near-black surface as an opaque fallback so
+// the independent viewport never exposes a black rectangle around the pill.
+pub const PILL: Color32 = Color32::from_rgb(24, 24, 27);
 pub const HANDLE: Color32 = Color32::from_rgba_unmultiplied_const(255, 255, 255, 89); // 0.35
 pub const EMPTY_TEXT: Color32 = Color32::from_rgba_unmultiplied_const(255, 255, 255, 140); // 0.55
 
@@ -16,11 +19,19 @@ pub fn show(ui: &mut Ui, speakers: &[String]) {
     let rect = ui.max_rect();
 
     // 胶囊底：整窗即胶囊（12px 圆角深底）
-    ui.painter()
-        .rect(rect, CornerRadius::same(metrics::RADIUS_OVERLAY as u8), PILL, egui::Stroke::NONE, StrokeKind::Inside);
+    ui.painter().rect(
+        rect,
+        CornerRadius::same(metrics::RADIUS_OVERLAY as u8),
+        PILL,
+        egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 18)),
+        StrokeKind::Inside,
+    );
 
     // 把手槽（14px 宽）+ 6×40 竖把手；拖动整窗
-    let handle_rect = Rect::from_min_max(rect.left_top(), egui::pos2(rect.left() + metrics::OVERLAY_HANDLE_SLOT, rect.bottom()));
+    let handle_rect = Rect::from_min_max(
+        rect.left_top(),
+        egui::pos2(rect.left() + metrics::OVERLAY_HANDLE_SLOT, rect.bottom()),
+    );
     let resp = ui.allocate_rect(handle_rect, Sense::drag());
     if resp.drag_started() {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
@@ -28,7 +39,10 @@ pub fn show(ui: &mut Ui, speakers: &[String]) {
     let (hw, hh) = metrics::OVERLAY_HANDLE;
     ui.painter().rect_filled(
         Rect::from_center_size(
-            egui::pos2(rect.left() + metrics::OVERLAY_HANDLE_SLOT / 2.0, rect.center().y),
+            egui::pos2(
+                rect.left() + metrics::OVERLAY_HANDLE_SLOT / 2.0,
+                rect.center().y,
+            ),
             Vec2::new(hw, hh),
         ),
         CornerRadius::same(3),
@@ -37,7 +51,10 @@ pub fn show(ui: &mut Ui, speakers: &[String]) {
 
     // 内容区（把手右侧）
     let content = Rect::from_min_max(
-        egui::pos2(rect.left() + metrics::OVERLAY_HANDLE_SLOT + 2.0, rect.top() + 12.0),
+        egui::pos2(
+            rect.left() + metrics::OVERLAY_HANDLE_SLOT + 2.0,
+            rect.top() + 12.0,
+        ),
         egui::pos2(rect.right() - 14.0, rect.bottom() - 12.0),
     );
     if speakers.is_empty() {
@@ -58,8 +75,11 @@ pub fn show(ui: &mut Ui, speakers: &[String]) {
             let cy = content.top() + row_h * i as f32 + row_h / 2.0;
             // 麦克风圆标（20px 蓝底白图标）
             let c = egui::pos2(content.left() + 10.0, cy);
-            ui.painter()
-                .circle_filled(c, 10.0, Color32::from_rgba_unmultiplied_const(0, 0, 120, 230)); // 0.9
+            ui.painter().circle_filled(
+                c,
+                10.0,
+                Color32::from_rgba_unmultiplied_const(0, 120, 212, 230),
+            ); // 0.9
             icons::draw(ui.painter(), c, 12.0, Icon::Mic, colors::WHITE);
             let galley = ui.painter().layout(
                 name.clone(),

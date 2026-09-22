@@ -4,7 +4,8 @@
 #![allow(dead_code)] // MD2 阶段控件逐步接入
 use crate::theme::{colors, font, metrics, Theme};
 use eframe::egui::{
-    self, Color32, CornerRadius, FontId, Margin, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2,
+    self, Color32, CornerRadius, FontId, Margin, Pos2, Rect, Response, Sense, Stroke, StrokeKind,
+    Ui, Vec2,
 };
 
 use super::icons::{self as icons, Icon};
@@ -32,7 +33,8 @@ impl DotKind {
 /// 8px 实心圆点 + 3px 同色光晕，画在 pos（圆心）。
 pub fn status_dot(ui: &Ui, pos: Pos2, kind: DotKind) {
     let c = kind.color();
-    ui.painter().circle_filled(pos, metrics::STATUS_DOT / 2.0, c);
+    ui.painter()
+        .circle_filled(pos, metrics::STATUS_DOT / 2.0, c);
     let halo = Color32::from_rgba_unmultiplied_const(c.r(), c.g(), c.b(), 0x22);
     ui.painter().circle(
         pos,
@@ -53,7 +55,13 @@ pub fn card(t: &Theme, pad: Margin) -> egui::Frame {
 
 /// Fluent 单行输入框：34px 高、5px 圆角、2px 加粗下边线；error 红；聚焦变蓝。
 /// 点击框内空白也能聚焦输入区。返回 TextEdit 的响应。
-pub fn fluent_input(ui: &mut Ui, t: &Theme, label: &str, text: &mut String, error: bool) -> Response {
+pub fn fluent_input(
+    ui: &mut Ui,
+    t: &Theme,
+    label: &str,
+    text: &mut String,
+    error: bool,
+) -> Response {
     ui.label(egui::RichText::new(label).size(font::AUX).color(t.subtext));
     ui.add_space(5.0);
     let width = ui.available_width();
@@ -93,7 +101,8 @@ pub fn fluent_input(ui: &mut Ui, t: &Theme, label: &str, text: &mut String, erro
         Pos2::new(rect.left() + 1.0, rect.bottom() - 3.0),
         Pos2::new(rect.right() - 1.0, rect.bottom() - 1.0),
     );
-    ui.painter().rect_filled(band, CornerRadius::same(1), bottom);
+    ui.painter()
+        .rect_filled(band, CornerRadius::same(1), bottom);
     if box_resp.clicked() {
         edit_resp.request_focus();
     }
@@ -104,19 +113,37 @@ pub fn fluent_input(ui: &mut Ui, t: &Theme, label: &str, text: &mut String, erro
 pub fn primary_button(ui: &mut Ui, label: &str, height: f32) -> Response {
     let width = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
-    let bg = if resp.hovered() { colors::BLUE_HOVER } else { colors::BLUE };
-    ui.painter()
-        .rect(rect, CornerRadius::same(metrics::RADIUS_CTRL as u8), bg, Stroke::NONE, StrokeKind::Inside);
-    paint_centered_text(ui, rect, label, FontId::proportional(font::PRIMARY_BTN), colors::WHITE);
+    let bg = if resp.hovered() {
+        colors::BLUE_HOVER
+    } else {
+        colors::BLUE
+    };
+    ui.painter().rect(
+        rect,
+        CornerRadius::same(metrics::RADIUS_CTRL as u8),
+        bg,
+        Stroke::NONE,
+        StrokeKind::Inside,
+    );
+    paint_centered_text(
+        ui,
+        rect,
+        label,
+        FontId::proportional(font::PRIMARY_BTN),
+        colors::WHITE,
+    );
     resp
 }
 
 /// 次级小按钮（立即重连 / 修改 等）：透明底 + 边框。
 pub fn secondary_button(ui: &mut Ui, t: &Theme, label: &str, height: f32) -> Response {
     let pad_x = 12.0;
-    let galley = ui
-        .painter()
-        .layout(label.to_owned(), FontId::proportional(font::AUX), t.text, f32::INFINITY);
+    let galley = ui.painter().layout(
+        label.to_owned(),
+        FontId::proportional(font::AUX),
+        t.text,
+        f32::INFINITY,
+    );
     let size = Vec2::new(galley.size().x + pad_x * 2.0, height);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let bg = if resp.hovered() { t.hover } else { t.input_bg };
@@ -128,7 +155,10 @@ pub fn secondary_button(ui: &mut Ui, t: &Theme, label: &str, height: f32) -> Res
         StrokeKind::Inside,
     );
     ui.painter().galley(
-        Pos2::new(rect.center().x - galley.size().x / 2.0, rect.center().y - galley.size().y / 2.0),
+        Pos2::new(
+            rect.center().x - galley.size().x / 2.0,
+            rect.center().y - galley.size().y / 2.0,
+        ),
         galley,
         t.text,
     );
@@ -151,8 +181,13 @@ pub fn icon_button(
         (Color32::TRANSPARENT, t.subtext)
     };
     if fill != Color32::TRANSPARENT {
-        ui.painter()
-            .rect(rect, CornerRadius::same(metrics::RADIUS_CTRL as u8), fill, Stroke::NONE, StrokeKind::Inside);
+        ui.painter().rect(
+            rect,
+            CornerRadius::same(metrics::RADIUS_CTRL as u8),
+            fill,
+            Stroke::NONE,
+            StrokeKind::Inside,
+        );
     }
     icons::draw(ui.painter(), rect.center(), size, icon, color);
     resp
@@ -160,28 +195,45 @@ pub fn icon_button(
 
 /// 在 rect 正中画一行文字。
 pub fn paint_centered_text(ui: &Ui, rect: Rect, text: &str, font_id: FontId, color: Color32) {
-    let galley = ui.painter().layout(text.to_owned(), font_id, color, f32::INFINITY);
+    let galley = ui
+        .painter()
+        .layout(text.to_owned(), font_id, color, f32::INFINITY);
     let pos = rect.center() - galley.size() / 2.0;
     ui.painter().galley(Pos2::new(pos.x, pos.y), galley, color);
 }
 
-/// 窗口底渐变（Mica 不可用时的 Win10 回退）：3 段色带，色差极小，
-/// 用 32 条横带近似径向渐变即可无肉眼色阶。
+/// 窗口底渐变（Mica 不可用时的 Win10 回退）。React 原型的背景是
+/// `radial-gradient(120% 90% at 15% 0%)`；用 32×32 个小格计算同一
+/// 椭圆距离，避免纵向色带把顶部焦点抹平。
 pub fn paint_window_fallback(ui: &Ui, t: &Theme) {
     let rect = ui.max_rect();
     let [top, mid, bottom] = t.window_bg;
-    let bands = 32;
-    for i in 0..bands {
-        let frac = i as f32 / bands as f32;
-        let c = if frac < 0.45 {
-            lerp_rgb(top, mid, frac / 0.45)
-        } else {
-            lerp_rgb(mid, bottom, (frac - 0.45) / 0.55)
-        };
-        let y0 = rect.top() + rect.height() * frac;
-        let y1 = rect.top() + rect.height() * (i + 1) as f32 / bands as f32;
-        ui.painter()
-            .rect_filled(Rect::from_min_max(Pos2::new(rect.left(), y0), Pos2::new(rect.right(), y1)), CornerRadius::ZERO, c);
+    let cols = 32;
+    let rows = 32;
+    let focal = Pos2::new(rect.left() + rect.width() * 0.15, rect.top());
+    let radius_x = (rect.width() * 1.20).max(1.0);
+    let radius_y = (rect.height() * 0.90).max(1.0);
+    for iy in 0..rows {
+        for ix in 0..cols {
+            let x0 = rect.left() + rect.width() * ix as f32 / cols as f32;
+            let x1 = rect.left() + rect.width() * (ix + 1) as f32 / cols as f32;
+            let y0 = rect.top() + rect.height() * iy as f32 / rows as f32;
+            let y1 = rect.top() + rect.height() * (iy + 1) as f32 / rows as f32;
+            let center = Pos2::new((x0 + x1) * 0.5, (y0 + y1) * 0.5);
+            let dx = (center.x - focal.x) / radius_x;
+            let dy = (center.y - focal.y) / radius_y;
+            let dist = (dx * dx + dy * dy).sqrt().clamp(0.0, 1.0);
+            let c = if dist < 0.45 {
+                lerp_rgb(top, mid, dist / 0.45)
+            } else {
+                lerp_rgb(mid, bottom, (dist - 0.45) / 0.55)
+            };
+            ui.painter().rect_filled(
+                Rect::from_min_max(Pos2::new(x0, y0), Pos2::new(x1, y1)),
+                CornerRadius::ZERO,
+                c,
+            );
+        }
     }
 }
 
@@ -196,9 +248,12 @@ fn lerp_rgb(a: Color32, b: Color32, t: f32) -> Color32 {
 
 /// 蓝色文字链接按钮（＋ 存为书签 / 恢复默认设置 等）。
 pub fn text_link(ui: &mut Ui, label: &str) -> bool {
-    let galley = ui
-        .painter()
-        .layout(label.to_owned(), FontId::proportional(font::CTRL_ROW), colors::BLUE, f32::INFINITY);
+    let galley = ui.painter().layout(
+        label.to_owned(),
+        FontId::proportional(font::CTRL_ROW),
+        colors::BLUE,
+        f32::INFINITY,
+    );
     let (rect, resp) = ui.allocate_exact_size(galley.size() + Vec2::new(8.0, 6.0), Sense::click());
     ui.painter().galley(
         Pos2::new(rect.left() + 4.0, rect.center().y - galley.size().y / 2.0),

@@ -1,12 +1,18 @@
 //! MicaApp：窗口状态机 + 自绘 Fluent 标题栏 + 演示开关。
 //! MD2 界面先行阶段：数据全为假数据，演示开关即未来真功能的接线口。
+//!
+//! UI direction contract (f5954dd2 / operate): compact Windows-native voice
+//! workspace, with state and scanability taking priority over decoration.
+//! The prototype's 420/520px surfaces remain the composition authority.
 use crate::theme::{colors, font, metrics, Theme};
 use crate::ui::icons::{self as icons, Icon};
+use crate::ui::main_window;
 use crate::ui::overlay;
 use crate::ui::settings;
-use crate::ui::main_window;
 use crate::ui::widgets::{self as w};
-use eframe::egui::{self, Color32, CornerRadius, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
+use eframe::egui::{
+    self, Color32, CornerRadius, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
@@ -50,9 +56,18 @@ impl ConnectState {
             addr: "voice.kaihei.gg:9987".into(),
             nick: "李四".into(),
             bookmarks: vec![
-                Bookmark { name: "开黑联盟".into(), addr: "voice.kaihei.gg:9987".into() },
-                Bookmark { name: "深夜电台".into(), addr: "ts.midnight-radio.net".into() },
-                Bookmark { name: "设计小组".into(), addr: "10.0.4.21:9987".into() },
+                Bookmark {
+                    name: "开黑联盟".into(),
+                    addr: "voice.kaihei.gg:9987".into(),
+                },
+                Bookmark {
+                    name: "深夜电台".into(),
+                    addr: "ts.midnight-radio.net".into(),
+                },
+                Bookmark {
+                    name: "设计小组".into(),
+                    addr: "10.0.4.21:9987".into(),
+                },
             ],
         }
     }
@@ -109,14 +124,24 @@ impl MicaApp {
     /// MICASPEAK_UI_STATE 环境变量：截图自检 / 演示固定状态用。
     fn apply_env_state(&mut self, ctx: &egui::Context) {
         let pref = |p: egui::ThemePreference| Some(p);
-        match std::env::var("MICASPEAK_UI_STATE").unwrap_or_default().as_str() {
-            "main" => self.view = View::Main,
+        match std::env::var("MICASPEAK_UI_STATE")
+            .unwrap_or_default()
+            .as_str()
+        {
+            // The light and dark reference frames both show one remote user
+            // already speaking; keep that state deterministic for screenshots.
+            "main" => {
+                self.view = View::Main;
+                self.demo.speakers = vec!["张三"];
+            }
             "main-dark" => {
                 self.view = View::Main;
                 self.theme_pref = pref(egui::ThemePreference::Dark);
+                self.demo.speakers = vec!["张三"];
             }
             "speaking" => {
                 self.view = View::Main;
+                self.demo.ptt_held = true;
                 self.demo.speakers = vec!["张三", "李四"];
             }
             "ptt" => {
@@ -128,9 +153,10 @@ impl MicaApp {
                 self.view = View::Main;
                 self.demo.disconnected = true;
                 self.demo.reconnecting = true;
+                self.demo.speakers = vec!["张三"];
+                self.demo.disconnect_at = ctx.time();
             }
             "settings" => {
-                
                 self.demo.settings_open = true;
             }
             "overlay" => {
@@ -145,6 +171,7 @@ impl MicaApp {
             "error" => {
                 self.view = View::Connect;
                 self.connect_error = true;
+                self.connect.addr = "voice.wrong-host:9987".into();
             }
             _ => {}
         }
@@ -182,6 +209,12 @@ impl MicaApp {
     // ---------- 窗口骨架 ----------
 
     fn caption_bar(&mut self, ui: &mut egui::Ui, t: &Theme) {
+        // Fixed-state screenshots are the visual acceptance surface. Keep the
+        // switches available for a normal dev run, but never let them alter a
+        // state screenshot's 30px native caption composition.
+        let show_demo = std::env::var("MICASPEAK_UI_STATE")
+            .map(|state| state.trim().is_empty())
+            .unwrap_or(true);
         let theme_label = match self.theme_pref {
             None => "主题·跟随",
             Some(egui::ThemePreference::Light) => "主题·浅",
@@ -199,31 +232,41 @@ impl MicaApp {
             .show_separator_line(false)
             .show(ui, |ui| {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.add_space(8.0);
-                    if demo_pill(ui, t, theme_label, false).clicked() {
-                        cycle_theme = true;
+                    if show_demo {
+                        ui.add_space(8.0);
+                        if demo_pill(ui, t, theme_label, false).clicked() {
+                            cycle_theme = true;
+                        }
+                        ui.add_space(6.0);
+                        if demo_pill(ui, t, "悬浮", overlay_open).clicked() {
+                            overlay_open = !overlay_open;
+                        }
+                        ui.add_space(6.0);
+                        if demo_pill(ui, t, "断线", self.demo.disconnected).clicked() {
+                            toggle_disconnect = true;
+                        }
+                        ui.add_space(6.0);
+                        if demo_pill(ui, t, "说话", !self.demo.speakers.is_empty()).clicked() {
+                            cycle_speaking = true;
+                        }
+                        ui.add_space(6.0);
+                        if demo_pill(ui, t, "设置窗", settings_open).clicked() {
+                            settings_open = !settings_open;
+                        }
                     }
-                    ui.add_space(6.0);
-                    if demo_pill(ui, t, "悬浮", overlay_open).clicked() {
-                        overlay_open = !overlay_open;
-                    }
-                    ui.add_space(6.0);
-                    if demo_pill(ui, t, "断线", self.demo.disconnected).clicked() {
-                        toggle_disconnect = true;
-                    }
-                    ui.add_space(6.0);
-                    if demo_pill(ui, t, "说话", !self.demo.speakers.is_empty()).clicked() {
-                        cycle_speaking = true;
-                    }
-                    ui.add_space(6.0);
-                    if demo_pill(ui, t, "设置窗", settings_open).clicked() {
-                        settings_open = !settings_open;
-                    }
-                    // 标题栏空白区（右侧给窗控钮组留位，含按钮间距）：拖动移动窗口 / 双击最大化
+
+                    // 标题栏空白区（右侧给窗控钮组留位，含按钮间距）：
+                    // 拖动移动窗口 / 双击最大化。固定状态下它从左边开始，
+                    // 与 React 原型的原生 caption 保持一致。
                     let buttons_w = 3.0 * metrics::CAPTION_BTN.x + 2.0 * 8.0;
                     let full = ui.available_rect_before_wrap();
+                    let drag_left = if show_demo {
+                        full.left().max(ui.cursor().left())
+                    } else {
+                        full.left()
+                    };
                     let drag_rect = egui::Rect::from_min_max(
-                        full.min,
+                        egui::pos2(drag_left, full.top()),
                         egui::pos2(full.right() - buttons_w, full.bottom()),
                     );
                     let drag = ui.allocate_rect(drag_rect, Sense::drag());
@@ -265,11 +308,9 @@ impl MicaApp {
     fn body(&mut self, ui: &mut egui::Ui, t: &Theme) {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(Color32::TRANSPARENT))
-            .show(ui, |ui| {
-                match self.view {
-                    View::Connect => self.connect_page(ui, t),
-                    View::Main => self.main_page(ui, t),
-                }
+            .show(ui, |ui| match self.view {
+                View::Connect => self.connect_page(ui, t),
+                View::Main => self.main_page(ui, t),
             });
     }
 
@@ -287,7 +328,11 @@ impl MicaApp {
                     let (r, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
                     w::status_dot(ui, r.center(), w::DotKind::Gray);
                     ui.add_space(6.0);
-                    ui.label(egui::RichText::new("未连接").size(font::AUX).color(t.subtext));
+                    ui.label(
+                        egui::RichText::new("未连接")
+                            .size(font::AUX)
+                            .color(t.subtext),
+                    );
                 });
             });
 
@@ -307,7 +352,7 @@ impl MicaApp {
             .frame(egui::Frame::new().inner_margin(egui::Margin {
                 left: 12,
                 right: 12,
-                top: 6,
+                top: 4,
                 bottom: 8,
             }))
             .show(ui, |ui| {
@@ -360,23 +405,35 @@ impl MicaApp {
 
                 // --- 书签卡片（占满剩余高度）---
                 let card_h = ui.available_height();
-                w::card(t, egui::Margin { left: 6, right: 6, top: 12, bottom: 8 }).show(
-                    ui,
-                    |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.set_height(card_h);
-                        ui.horizontal(|ui| {
-                            // 设计稿：书签标题距卡片内容左边 12
-                            ui.add_space(12.0);
-                            ui.label(
-                                egui::RichText::new("书签").size(font::SECTION).strong().color(t.faint),
-                            );
-                        });
-                        ui.add_space(6.0);
-                        let link_h = 30.0;
-                        let scroll_h = (ui.available_height() - link_h).max(40.0);
-                        ui.allocate_ui(Vec2::new(ui.available_width(), scroll_h), |ui| {
-                            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                w::card(
+                    t,
+                    egui::Margin {
+                        left: 6,
+                        right: 6,
+                        top: 12,
+                        bottom: 8,
+                    },
+                )
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.set_min_size(Vec2::new(ui.available_width(), card_h));
+                    ui.horizontal(|ui| {
+                        // 设计稿：书签标题距卡片内容左边 12
+                        ui.add_space(12.0);
+                        ui.label(
+                            egui::RichText::new("书签")
+                                .size(font::SECTION)
+                                .strong()
+                                .color(t.faint),
+                        );
+                    });
+                    ui.add_space(6.0);
+                    let link_h = 30.0;
+                    let scroll_h = (ui.available_height() - link_h).max(40.0);
+                    ui.allocate_ui(Vec2::new(ui.available_width(), scroll_h), |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink(false)
+                            .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 for (i, (name, baddr)) in bookmarks.iter().enumerate() {
                                     if let Some(a) = bookmark_row(ui, t, i, name, baddr) {
@@ -384,16 +441,15 @@ impl MicaApp {
                                     }
                                 }
                             });
-                        });
-                        ui.horizontal(|ui| {
-                            // 设计稿：链接 margin '4px 8px'
-                            ui.add_space(8.0);
-                            if w::text_link(ui, "＋ 存为书签") {
-                                action = ConnectAction::Add;
-                            }
-                        });
-                    },
-                );
+                    });
+                    ui.horizontal(|ui| {
+                        // 设计稿：链接 margin '4px 8px'
+                        ui.add_space(8.0);
+                        if w::text_link(ui, "＋ 存为书签") {
+                            action = ConnectAction::Add;
+                        }
+                    });
+                });
             });
 
         // 写回状态并应用动作（演示：连接=切主窗口；接线时换成真连接）
@@ -409,6 +465,12 @@ impl MicaApp {
                 }
                 self.connect_error = false;
                 self.view = View::Main;
+                // The prototype's connected baseline includes one remote
+                // speaker, so the live screen immediately communicates voice
+                // activity instead of looking empty.
+                if self.demo.speakers.is_empty() {
+                    self.demo.speakers = vec!["张三"];
+                }
             }
             ConnectAction::Delete(i) => {
                 self.connect.bookmarks.remove(i);
@@ -421,7 +483,10 @@ impl MicaApp {
                     .next()
                     .unwrap_or("服务器")
                     .to_owned();
-                self.connect.bookmarks.push(Bookmark { name, addr: self.connect.addr.clone() });
+                self.connect.bookmarks.push(Bookmark {
+                    name,
+                    addr: self.connect.addr.clone(),
+                });
             }
         }
     }
@@ -448,7 +513,8 @@ impl MicaApp {
                     self.demo.reconnect_started = None;
                 }
             }
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(200));
         }
         let reconnecting = self.demo.reconnecting;
         let mut gear = false;
@@ -470,36 +536,6 @@ impl MicaApp {
         if reconnect_clicked && self.demo.reconnect_started.is_none() {
             self.demo.reconnect_started = Some(now);
         }
-    }
-
-    fn placeholder(&mut self, ui: &mut egui::Ui, t: &Theme, title: &str) {
-        let dark = self.effective_dark(ui.ctx());
-        let speakers = self.demo.speakers.clone();
-        let (dis, rec) = (self.demo.disconnected, self.demo.reconnecting);
-        let (ov, st) = (self.demo.overlay_open, self.demo.settings_open);
-        let (mica, ptt, err) = (self.mica, self.demo.ptt_held, self.connect_error);
-
-        ui.add_space(24.0);
-        w::card(t, egui::Margin::same(20)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(egui::RichText::new(title).size(16.0).strong().color(t.text));
-            ui.add_space(8.0);
-            for (k, v) in [
-                ("Mica", mica.to_string()),
-                ("主题", if dark { "深" } else { "浅" }.to_string()),
-                ("说话人", speakers.join("、")),
-                ("PTT", ptt.to_string()),
-                ("断线/重连中", format!("{dis}/{rec}")),
-                ("悬浮窗/设置窗", format!("{ov}/{st}")),
-                ("表单错误", err.to_string()),
-            ] {
-                ui.label(
-                    egui::RichText::new(format!("{k}: {v}"))
-                        .size(font::AUX)
-                        .color(t.subtext),
-                );
-            }
-        });
     }
 }
 
@@ -545,7 +581,13 @@ impl eframe::App for MicaApp {
                 .demo
                 .speakers
                 .iter()
-                .map(|s| if *s == "李四" { "李四 (我)".to_owned() } else { s.to_string() })
+                .map(|s| {
+                    if *s == "李四" {
+                        "李四 (我)".to_owned()
+                    } else {
+                        s.to_string()
+                    }
+                })
                 .collect();
             let app = &mut *self;
             ui.ctx().show_viewport_immediate(
@@ -624,15 +666,38 @@ impl MicaApp {
 
 // ---------- 连接页部件 ----------
 
-/// 40×40 蓝色圆角 logo 盒 + 白色麦克风图标。
-/// 设计稿为 150° 渐变（#0078D4→#2FA1F0），40px 尺寸下纯色观感一致。
+/// 40×40 蓝色渐变 logo 盒 + 白色麦克风图标。
+/// 设计稿为 150° 渐变（#0078D4→#2FA1F0）；内层高光保留原型的
+/// 亮角层次，同时避免在 egui 后端里引入额外材质依赖。
 fn paint_logo(ui: &Ui, rect: Rect) {
-    ui.painter().rect(rect, CornerRadius::same(10), colors::BLUE, Stroke::NONE, StrokeKind::Inside);
+    ui.painter().rect_filled(
+        rect.translate(Vec2::new(0.0, 2.0)),
+        CornerRadius::same(10),
+        Color32::from_rgba_unmultiplied(0, 120, 212, 54),
+    );
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(10), colors::BLUE);
+    ui.painter().rect_filled(
+        rect.shrink(2.0),
+        CornerRadius::same(8),
+        Color32::from_rgba_unmultiplied(
+            colors::ACCENT2.r(),
+            colors::ACCENT2.g(),
+            colors::ACCENT2.b(),
+            40,
+        ),
+    );
     icons::draw(ui.painter(), rect.center(), 20.0, Icon::Mic, colors::WHITE);
 }
 
 /// 书签行：名称 + 地址两行、整行 hover、双击连接、右侧 × 删除。
-fn bookmark_row(ui: &mut Ui, t: &Theme, idx: usize, name: &str, addr: &str) -> Option<ConnectAction> {
+fn bookmark_row(
+    ui: &mut Ui,
+    t: &Theme,
+    idx: usize,
+    name: &str,
+    addr: &str,
+) -> Option<ConnectAction> {
     let h = 46.0;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h), Sense::click());
     if resp.hovered() {
@@ -644,15 +709,28 @@ fn bookmark_row(ui: &mut Ui, t: &Theme, idx: usize, name: &str, addr: &str) -> O
             StrokeKind::Inside,
         );
     }
-    let name_g = ui
-        .painter()
-        .layout(name.to_owned(), egui::FontId::proportional(font::BODY), t.text, f32::INFINITY);
-    let addr_g = ui
-        .painter()
-        .layout(addr.to_owned(), egui::FontId::proportional(font::SMALL), t.subtext, f32::INFINITY);
-    ui.painter().galley(egui::pos2(rect.left() + 12.0, rect.top() + 6.0), name_g, t.text);
-    ui.painter()
-        .galley(egui::pos2(rect.left() + 12.0, rect.top() + 25.0), addr_g, t.subtext);
+    let name_g = ui.painter().layout(
+        name.to_owned(),
+        egui::FontId::proportional(font::BODY),
+        t.text,
+        f32::INFINITY,
+    );
+    let addr_g = ui.painter().layout(
+        addr.to_owned(),
+        egui::FontId::proportional(font::SMALL),
+        t.subtext,
+        f32::INFINITY,
+    );
+    ui.painter().galley(
+        egui::pos2(rect.left() + 12.0, rect.top() + 6.0),
+        name_g,
+        t.text,
+    );
+    ui.painter().galley(
+        egui::pos2(rect.left() + 12.0, rect.top() + 25.0),
+        addr_g,
+        t.subtext,
+    );
 
     // 删除 ×（右侧 26×26 热区）
     let x_rect = Rect::from_center_size(
@@ -685,8 +763,6 @@ fn bookmark_row(ui: &mut Ui, t: &Theme, idx: usize, name: &str, addr: &str) -> O
     None
 }
 
-
-
 /// 演示开关小胶囊（MD2 阶段专用，接线时整体移除）。
 fn demo_pill(ui: &mut Ui, t: &Theme, label: &str, active: bool) -> Response {
     let galley = ui.painter().layout(
@@ -705,7 +781,13 @@ fn demo_pill(ui: &mut Ui, t: &Theme, label: &str, active: bool) -> Response {
         Color32::TRANSPARENT
     };
     if fill != Color32::TRANSPARENT {
-        ui.painter().rect(rect, CornerRadius::same(4), fill, Stroke::NONE, StrokeKind::Inside);
+        ui.painter().rect(
+            rect,
+            CornerRadius::same(4),
+            fill,
+            Stroke::NONE,
+            StrokeKind::Inside,
+        );
     }
     ui.painter().rect(
         rect,
@@ -729,7 +811,8 @@ fn caption_buttons(ui: &mut Ui, t: &Theme) {
     let (rect, resp) = ui.allocate_exact_size(btn, Sense::click());
     paint_caption_button(ui, t, rect, &resp, Icon::Minus, 14.0, false);
     if resp.clicked() {
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
     }
     // 最大化
     let (rect, resp) = ui.allocate_exact_size(btn, Sense::click());
@@ -757,8 +840,18 @@ fn paint_caption_button(
     is_close: bool,
 ) {
     if resp.hovered() {
-        let fill = if is_close { colors::RED } else { colors::ROW_HOVER };
-        ui.painter().rect(rect, CornerRadius::ZERO, fill, Stroke::NONE, StrokeKind::Inside);
+        let fill = if is_close {
+            colors::RED
+        } else {
+            colors::ROW_HOVER
+        };
+        ui.painter().rect(
+            rect,
+            CornerRadius::ZERO,
+            fill,
+            Stroke::NONE,
+            StrokeKind::Inside,
+        );
     }
     let color = if is_close && resp.hovered() {
         colors::WHITE

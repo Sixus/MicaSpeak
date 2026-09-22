@@ -3,7 +3,10 @@
 use crate::theme::{colors, font, metrics, Theme};
 use crate::ui::icons::{self as icons, Icon};
 use crate::ui::widgets::{self as w, DotKind};
-use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextFormat, Ui, Vec2};
+use eframe::egui::{
+    self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextFormat, Ui,
+    Vec2,
+};
 
 pub struct User {
     pub name: String,
@@ -47,26 +50,79 @@ impl MainState {
                     name: "大厅".into(),
                     open: true,
                     locked: false,
-                    users: vec![User { name: "王五".into(), me: false }, User { name: "赵六".into(), me: false }],
+                    users: vec![
+                        User {
+                            name: "王五".into(),
+                            me: false,
+                        },
+                        User {
+                            name: "赵六".into(),
+                            me: false,
+                        },
+                    ],
                 },
                 Group {
                     name: "游戏频道".into(),
                     open: true,
                     locked: false,
                     users: vec![
-                        User { name: "张三".into(), me: false },
-                        User { name: "李四".into(), me: true },
-                        User { name: "孙七".into(), me: false },
+                        User {
+                            name: "张三".into(),
+                            me: false,
+                        },
+                        User {
+                            name: "李四".into(),
+                            me: true,
+                        },
+                        User {
+                            name: "孙七".into(),
+                            me: false,
+                        },
                     ],
                 },
-                Group { name: "音乐频道".into(), open: false, locked: true, users: vec![] },
+                Group {
+                    name: "音乐频道".into(),
+                    open: false,
+                    locked: true,
+                    users: vec![],
+                },
             ],
             messages: vec![
-                ChatMsg { time: "14:28".into(), nick: "王五".into(), body: "大家晚上好，今晚开几把？".into(), me: false, url: false },
-                ChatMsg { time: "14:30".into(), nick: "张三".into(), body: "房间信息在这".into(), me: false, url: false },
-                ChatMsg { time: "14:31".into(), nick: "张三".into(), body: "https://kaihei.gg/room/42".into(), me: false, url: true },
-                ChatMsg { time: "14:32".into(), nick: "李四".into(), body: "收到，马上进语音".into(), me: true, url: false },
-                ChatMsg { time: "14:33".into(), nick: "孙七".into(), body: "等我五分钟，先热身".into(), me: false, url: false },
+                ChatMsg {
+                    time: "14:28".into(),
+                    nick: "王五".into(),
+                    body: "大家晚上好，今晚开几把？".into(),
+                    me: false,
+                    url: false,
+                },
+                ChatMsg {
+                    time: "14:30".into(),
+                    nick: "张三".into(),
+                    body: "房间信息在这".into(),
+                    me: false,
+                    url: false,
+                },
+                ChatMsg {
+                    time: "14:31".into(),
+                    nick: "张三".into(),
+                    body: "https://kaihei.gg/room/42".into(),
+                    me: false,
+                    url: true,
+                },
+                ChatMsg {
+                    time: "14:32".into(),
+                    nick: "李四".into(),
+                    body: "收到，马上进语音".into(),
+                    me: true,
+                    url: false,
+                },
+                ChatMsg {
+                    time: "14:33".into(),
+                    nick: "孙七".into(),
+                    body: "等我五分钟，先热身".into(),
+                    me: false,
+                    url: false,
+                },
             ],
             chat_input: String::new(),
             unread_pm: true,
@@ -89,53 +145,91 @@ pub fn show(
     let full = ui.max_rect();
     let is_disconnected = countdown.is_some();
     // ---- 顶栏 ----
+    // Draw the row from fixed anchors instead of relying on nested horizontal
+    // layouts. This keeps the prototype's 14/9/9px rhythm stable when the
+    // server name or nickname changes length.
     egui::Panel::top("main_topbar")
-        .exact_size(28.0)
+        .exact_size(40.0)
         .frame(egui::Frame::new())
         .show_separator_line(false)
         .show(ui, |ui| {
-            ui.horizontal_centered(|ui| {
-                ui.add_space(14.0);
-                let (r, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
-                w::status_dot(
-                    ui,
-                    r.center(),
-                    if is_disconnected { DotKind::Yellow } else { DotKind::Green },
+            let bar = ui.max_rect();
+            let cy = bar.top() + 16.0;
+            w::status_dot(
+                ui,
+                egui::pos2(bar.left() + 18.0, cy),
+                if is_disconnected {
+                    DotKind::Yellow
+                } else {
+                    DotKind::Green
+                },
+            );
+
+            let name_g = ui.painter().layout(
+                st.server_name.clone(),
+                FontId::proportional(font::SERVER_NAME),
+                t.text,
+                f32::INFINITY,
+            );
+            let name_pos = egui::pos2(bar.left() + 31.0, cy - name_g.size().y / 2.0);
+            ui.painter().galley(name_pos, name_g.clone(), t.text);
+
+            let addr_g = ui.painter().layout(
+                st.server_addr.clone(),
+                FontId::proportional(font::SMALL),
+                t.faint,
+                f32::INFINITY,
+            );
+            let addr_pos = egui::pos2(
+                name_pos.x + name_g.size().x + 9.0,
+                cy - addr_g.size().y / 2.0,
+            );
+            ui.painter().galley(addr_pos, addr_g, t.faint);
+
+            let gear_rect = Rect::from_min_size(
+                egui::pos2(bar.right() - 14.0 - 28.0, bar.top() + 2.0),
+                Vec2::new(28.0, 28.0),
+            );
+            let gear = ui.interact(gear_rect, ui.id().with("main_gear"), Sense::click());
+            if gear.hovered() {
+                ui.painter().rect_filled(
+                    gear_rect,
+                    CornerRadius::same(metrics::RADIUS_CTRL as u8),
+                    t.hover,
                 );
-                ui.add_space(9.0);
-                ui.label(
-                    egui::RichText::new(&st.server_name)
-                        .size(13.5)
-                        .strong()
-                        .color(t.text),
-                );
-                // 设计稿：顶栏容器 gap 9（点/服务器名/地址/昵称/齿轮等距）
-                ui.add_space(9.0);
-                ui.label(egui::RichText::new(&st.server_addr).size(font::SMALL).color(t.faint));
-                // 弹性空隙
-                let addr_end = ui.cursor().right();
-                let _ = addr_end;
-                ui.allocate_ui_with_layout(
-                    Vec2::new((ui.available_width() - 90.0).max(4.0), 20.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |_| {},
-                );
-                ui.label(egui::RichText::new(&st.nick).size(font::AUX).color(t.subtext));
-                ui.add_space(9.0);
-                if w::icon_button(ui, t, Icon::Gear, 17.0, Vec2::splat(28.0), None).clicked() {
-                    *gear_clicked = true;
-                }
-            });
+            }
+            icons::draw(
+                ui.painter(),
+                gear_rect.center(),
+                17.0,
+                Icon::Gear,
+                if gear.hovered() { t.text } else { t.subtext },
+            );
+            if gear.clicked() {
+                *gear_clicked = true;
+            }
+
+            let nick_g = ui.painter().layout(
+                st.nick.clone(),
+                FontId::proportional(font::AUX),
+                t.subtext,
+                f32::INFINITY,
+            );
+            let nick_pos = egui::pos2(
+                gear_rect.left() - 9.0 - nick_g.size().x,
+                cy - nick_g.size().y / 2.0,
+            );
+            ui.painter().galley(nick_pos, nick_g, t.subtext);
         });
 
     // ---- 底部状态栏 ----
     egui::Panel::bottom("main_status")
-        .exact_size(46.0)
+        .exact_size(48.0)
         .frame(egui::Frame::new().inner_margin(egui::Margin {
             left: 12,
             right: 12,
             top: 8,
-            bottom: 6,
+            bottom: 12,
         }))
         .show_separator_line(false)
         .show(ui, |ui| {
@@ -147,37 +241,52 @@ pub fn show(
         .frame(egui::Frame::new().inner_margin(egui::Margin {
             left: 12,
             right: 12,
-            top: 2,
-            bottom: 8,
+            top: 0,
+            bottom: 0,
         }))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let avail = ui.available_width() - metrics::GAP;
-                let tree_w = (avail * metrics::TREE_WIDTH_FRAC).round();
-                let chat_w = avail - tree_w;
-                let h = ui.available_height();
-                // 频道树卡片（显式纵向布局，horizontal 内子 ui 会继承横向布局）
+            // React's tree is 45% of the content row; the 8px gap is added
+            // after that basis, so preserve the same flex math. Capture the
+            // full height before entering a row layout: egui's horizontal
+            // placer otherwise collapses its child row to the first line's
+            // minimum height.
+            let row = ui.available_size();
+            let tree_w = (row.x * metrics::TREE_WIDTH_FRAC).round();
+            let chat_w = (row.x - metrics::GAP - tree_w).max(0.0);
+            let h = row.y;
+            ui.allocate_ui_with_layout(row, egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                // 频道树卡片（显式纵向布局，避免横向子 ui 继承错误高度）
                 ui.allocate_ui_with_layout(
                     Vec2::new(tree_w, h),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
-                        w::card(t, egui::Margin { left: 5, right: 5, top: 8, bottom: 8 }).show(
-                            ui,
-                            |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.set_height(ui.available_height());
-                                egui::ScrollArea::vertical()
-                                    .auto_shrink(false)
-                                    .id_salt("tree_scroll")
-                                    .show(ui, |ui| {
-                                        ui.set_width(ui.available_width());
-                                        channel_tree(ui, t, &mut st.groups, speakers);
-                                    });
+                        w::card(
+                            t,
+                            egui::Margin {
+                                left: 5,
+                                right: 5,
+                                top: 8,
+                                bottom: 8,
                             },
-                        );
+                        )
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.set_min_size(ui.available_size());
+                            egui::ScrollArea::vertical()
+                                .auto_shrink(false)
+                                .id_salt("tree_scroll")
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    channel_tree(ui, t, &mut st.groups, speakers);
+                                });
+                        });
                     },
                 );
-                ui.add_space(metrics::GAP);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(metrics::GAP, h),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |_| {},
+                );
                 // 聊天卡片
                 ui.allocate_ui_with_layout(
                     Vec2::new(chat_w, h),
@@ -185,7 +294,7 @@ pub fn show(
                     |ui| {
                         w::card(t, egui::Margin::same(0)).show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            ui.set_height(ui.available_height());
+                            ui.set_min_size(ui.available_size());
                             chat(ui, t, st);
                         });
                     },
@@ -195,8 +304,17 @@ pub fn show(
 
     // ---- 重连遮罩（断线态最上层）----
     if reconnecting {
-        ui.painter().rect_filled(full, CornerRadius::same(0), t.scrim);
-        let card_size = Vec2::new(330.0, 60.0);
+        ui.painter()
+            .rect_filled(full, CornerRadius::same(0), t.scrim);
+        let galley = ui.painter().layout(
+            "连接已断开，正在尝试恢复…".to_owned(),
+            FontId::proportional(font::BODY),
+            t.text,
+            f32::INFINITY,
+        );
+        // React card is content-fit: 22px horizontal padding, a 20px
+        // spinner, 12px gap, and 18px vertical padding.
+        let card_size = Vec2::new(galley.size().x + 76.0, galley.size().y.max(20.0) + 36.0);
         let card_rect = Rect::from_center_size(full.center(), card_size);
         ui.painter().rect(
             card_rect,
@@ -205,26 +323,18 @@ pub fn show(
             Stroke::new(1.0, t.border),
             StrokeKind::Inside,
         );
-        let spinner_c = egui::pos2(card_rect.left() + 24.0, card_rect.center().y);
-        icons::draw_spinner(
-            ui.painter(),
-            spinner_c,
-            20.0,
-            colors::BLUE,
-            ui.ctx().time(),
-        );
-        let galley = ui.painter().layout(
-            "连接已断开，正在尝试恢复…".to_owned(),
-            FontId::proportional(font::BODY),
-            t.text,
-            f32::INFINITY,
-        );
+        let spinner_c = egui::pos2(card_rect.left() + 32.0, card_rect.center().y);
+        icons::draw_spinner(ui.painter(), spinner_c, 20.0, colors::BLUE, ui.ctx().time());
         ui.painter().galley(
-            Pos2::new(card_rect.left() + 44.0, card_rect.center().y - galley.size().y / 2.0),
+            Pos2::new(
+                card_rect.left() + 54.0,
+                card_rect.center().y - galley.size().y / 2.0,
+            ),
             galley,
             t.text,
         );
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(40));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(40));
     }
 }
 
@@ -233,10 +343,8 @@ pub fn show(
 fn channel_tree(ui: &mut Ui, t: &Theme, groups: &mut [Group], speakers: &[&'static str]) {
     for gi in 0..groups.len() {
         // 频道行
-        let (rect, resp) = ui.allocate_exact_size(
-            Vec2::new(ui.available_width(), 29.0),
-            Sense::click(),
-        );
+        let (rect, resp) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 29.0), Sense::click());
         if resp.hovered() {
             ui.painter().rect(
                 rect,
@@ -251,12 +359,19 @@ fn channel_tree(ui: &mut Ui, t: &Theme, groups: &mut [Group], speakers: &[&'stat
             ui.painter(),
             egui::pos2(rect.left() + 12.0, rect.center().y),
             15.0,
-            if g.open { Icon::ChevronDown } else { Icon::ChevronRight },
+            if g.open {
+                Icon::ChevronDown
+            } else {
+                Icon::ChevronRight
+            },
             t.faint,
         );
-        let name_g = ui
-            .painter()
-            .layout(g.name.clone(), FontId::proportional(font::BODY), t.text, f32::INFINITY);
+        let name_g = ui.painter().layout(
+            g.name.clone(),
+            FontId::proportional(font::BODY),
+            t.text,
+            f32::INFINITY,
+        );
         ui.painter().galley(
             egui::pos2(rect.left() + 30.0, rect.center().y - name_g.size().y / 2.0),
             name_g,
@@ -313,8 +428,14 @@ fn user_row(ui: &mut Ui, t: &Theme, u: &User, speaking: bool) {
         rect.left() + metrics::USER_ROW_LEFT + metrics::AVATAR / 2.0,
         rect.center().y,
     );
-    ui.painter().circle_filled(av_c, metrics::AVATAR / 2.0, t.chip);
-    let ch = u.name.chars().next().map(|c| c.to_string()).unwrap_or_default();
+    ui.painter()
+        .circle_filled(av_c, metrics::AVATAR / 2.0, t.chip);
+    let ch = u
+        .name
+        .chars()
+        .next()
+        .map(|c| c.to_string())
+        .unwrap_or_default();
     let ch_g = ui
         .painter()
         .layout(ch, FontId::proportional(10.0), t.subtext, f32::INFINITY);
@@ -328,10 +449,7 @@ fn user_row(ui: &mut Ui, t: &Theme, u: &User, speaking: bool) {
     job.append(
         &u.name,
         0.0,
-        TextFormat::simple(
-            FontId::proportional(font::CTRL_ROW),
-            if speaking { t.text } else { t.subtext },
-        ),
+        TextFormat::simple(FontId::proportional(font::CTRL_ROW), t.text),
     );
     if u.me {
         job.append(
@@ -340,13 +458,17 @@ fn user_row(ui: &mut Ui, t: &Theme, u: &User, speaking: bool) {
             TextFormat::simple(FontId::proportional(font::CTRL_ROW), t.faint),
         );
     }
-    let name_g = ui
-        .painter()
-        .layout_job(job); // TODO: 若无此 API 换 fonts.layout_job
+    let name_g = ui.painter().layout_job(job); // TODO: 若无此 API 换 fonts.layout_job
+                                               // The tree keeps names at the primary text contrast; only the optional
+                                               // speaking mic carries the accent color.
+    let name_color = t.text;
     ui.painter().galley(
-        egui::pos2(av_c.x + metrics::AVATAR / 2.0 + 8.0, rect.center().y - name_g.size().y / 2.0),
+        egui::pos2(
+            av_c.x + metrics::AVATAR / 2.0 + 8.0,
+            rect.center().y - name_g.size().y / 2.0,
+        ),
         name_g,
-        t.text,
+        name_color,
     );
     if speaking {
         icons::draw(
@@ -363,7 +485,10 @@ fn user_row(ui: &mut Ui, t: &Theme, u: &User, speaking: bool) {
 
 fn chat(ui: &mut Ui, t: &Theme, st: &mut MainState) {
     // Tab 行（设计稿：容器 padding-left 8、tab 间 gap 2、tab 自身左右 padding 10）
-    let (tab_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::hover());
+    // React has 6px container top padding plus the tab's own 6px/8px
+    // vertical padding. Its underline lands 40px below the card top.
+    let (tab_rect, _) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::hover());
     ui.painter().line_segment(
         [tab_rect.left_bottom(), tab_rect.right_bottom()],
         Stroke::new(1.0, t.divider),
@@ -374,7 +499,8 @@ fn chat(ui: &mut Ui, t: &Theme, st: &mut MainState) {
     let _ = x;
 
     // 消息列表（设计稿 padding '8px 10px'）
-    let msgs_h = ui.available_height() - metrics::COMPOSER_H - 16.0;
+    // The composer is a fixed 48px band (8px top/bottom + 32px control).
+    let msgs_h = ui.available_height() - (metrics::COMPOSER_H + 16.0);
     ui.allocate_ui(Vec2::new(ui.available_width(), msgs_h.max(40.0)), |ui| {
         egui::ScrollArea::vertical()
             .auto_shrink(false)
@@ -382,16 +508,20 @@ fn chat(ui: &mut Ui, t: &Theme, st: &mut MainState) {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 egui::Frame::new()
-                    .inner_margin(egui::Margin { left: 10, right: 10, top: 8, bottom: 8 })
+                    .inner_margin(egui::Margin {
+                        left: 10,
+                        right: 10,
+                        top: 11,
+                        bottom: 8,
+                    })
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        for m in &st.messages {
+                        for (idx, m) in st.messages.iter().enumerate() {
                             let job = msg_layout(t, m);
-                            ui.add(
-                                egui::Label::new(job)
-                                    .wrap_mode(egui::TextWrapMode::Wrap),
-                            );
-                            ui.add_space(7.0);
+                            ui.add(egui::Label::new(job).wrap_mode(egui::TextWrapMode::Wrap));
+                            if idx + 1 < st.messages.len() {
+                                ui.add_space(7.0);
+                            }
                         }
                     });
             });
@@ -406,9 +536,10 @@ fn chat(ui: &mut Ui, t: &Theme, st: &mut MainState) {
         [rect.left_top(), rect.right_top()],
         Stroke::new(1.0, t.divider),
     );
+    let send_size = metrics::COMPOSER_H;
     let input_rect = Rect::from_min_max(
         rect.left_top() + Vec2::new(8.0, 8.0),
-        rect.right_top() + Vec2::new(-8.0 - metrics::COMPOSER_H - 6.0, 8.0 + metrics::COMPOSER_H),
+        rect.right_top() + Vec2::new(-8.0 - send_size - 6.0, 8.0 + send_size),
     );
     ui.painter().rect(
         input_rect,
@@ -436,11 +567,15 @@ fn chat(ui: &mut Ui, t: &Theme, st: &mut MainState) {
     }
     // 发送按钮
     let send_rect = Rect::from_min_size(
-        egui::pos2(rect.right() - 8.0 - metrics::COMPOSER_H, rect.top() + 8.0),
-        Vec2::splat(metrics::COMPOSER_H),
+        egui::pos2(rect.right() - 8.0 - send_size, rect.top() + 8.0),
+        Vec2::splat(send_size),
     );
     let send_resp = ui.interact(send_rect, ui.id().with("chat_send"), Sense::click());
-    let send_bg = if send_resp.hovered() { colors::BLUE_HOVER } else { colors::BLUE };
+    let send_bg = if send_resp.hovered() {
+        colors::BLUE_HOVER
+    } else {
+        colors::BLUE
+    };
     ui.painter().rect(
         send_rect,
         CornerRadius::same(metrics::RADIUS_CTRL as u8),
@@ -448,7 +583,13 @@ fn chat(ui: &mut Ui, t: &Theme, st: &mut MainState) {
         Stroke::NONE,
         StrokeKind::Inside,
     );
-    icons::draw(ui.painter(), send_rect.center(), 15.0, Icon::Send, colors::WHITE);
+    icons::draw(
+        ui.painter(),
+        send_rect.center(),
+        15.0,
+        Icon::Send,
+        colors::WHITE,
+    );
     if send_resp.clicked() {
         send_now = true;
     }
@@ -503,15 +644,21 @@ fn draw_tab(
         // 激活 Tab 的 2px 蓝色下划线（压在分隔线上）
         let y = tab_rect.bottom() - 0.5;
         ui.painter().line_segment(
-            [egui::pos2(text_x - 10.0, y), egui::pos2(text_x + gw + 10.0, y)],
+            [
+                egui::pos2(text_x - 10.0, y),
+                egui::pos2(text_x + gw + 10.0, y),
+            ],
             Stroke::new(2.0, colors::BLUE),
         );
     }
     let mut x = text_x + gw;
     if unread {
         x += 5.0;
-        ui.painter()
-            .circle_filled(egui::pos2(x + 3.0, tab_rect.center().y), metrics::UNREAD_DOT / 2.0, colors::RED);
+        ui.painter().circle_filled(
+            egui::pos2(x + 3.0, tab_rect.center().y),
+            metrics::UNREAD_DOT / 2.0,
+            colors::RED,
+        );
         x += metrics::UNREAD_DOT;
     }
     x + 10.0 + 2.0 // tab 右内边距 + tab 间 gap
@@ -525,12 +672,15 @@ fn msg_layout(t: &Theme, m: &ChatMsg) -> egui::text::LayoutJob {
         TextFormat::simple(FontId::proportional(font::CTRL_ROW), t.faint),
     );
     let nick_color = if m.me { t.accent_text() } else { t.text };
-    let nick = if m.me { format!("{} (我)", m.nick) } else { m.nick.clone() };
+    let nick = if m.me {
+        format!("{} (我)", m.nick)
+    } else {
+        m.nick.clone()
+    };
     job.append(
         &nick,
         6.0,
-        TextFormat::simple(FontId::proportional(font::CTRL_ROW), nick_color)
-            .into(),
+        TextFormat::simple(FontId::proportional(font::CTRL_ROW), nick_color).into(),
     );
     let body_fmt = if m.url {
         let mut f = TextFormat::simple(FontId::proportional(font::CTRL_ROW), colors::BLUE);
@@ -628,7 +778,11 @@ fn bottom_bar(
             for i in 0..n {
                 let x0 = rect.left() + fill_w * i as f32 / n as f32;
                 let x1 = rect.left() + fill_w * (i + 1) as f32 / n as f32;
-                let c = lerp_color(colors::BLUE, colors::METER_GREEN, (i as f32 + 0.5) / n as f32);
+                let c = lerp_color(
+                    colors::BLUE,
+                    colors::METER_GREEN,
+                    (i as f32 + 0.5) / n as f32,
+                );
                 ui.painter().rect_filled(
                     Rect::from_min_max(
                         egui::pos2(x0.min(rect.right()), rect.top()),
@@ -638,12 +792,15 @@ fn bottom_bar(
                     c,
                 );
             }
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(50));
         }
 
         ui.add_space(12.0);
         ui.label(
-            egui::RichText::new("延迟 32ms").size(font::AUX).color(t.subtext),
+            egui::RichText::new("延迟 32ms")
+                .size(font::AUX)
+                .color(t.subtext),
         );
     });
 }
