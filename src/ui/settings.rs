@@ -28,7 +28,7 @@ impl Default for SettingsState {
 }
 
 /// 设置窗口主体（viewport 回调内调用；标题栏在 app.rs 的窗口骨架里）。
-pub fn show(ui: &mut Ui, t: &Theme, st: &mut SettingsState) {
+pub fn show(ui: &mut Ui, t: &Theme, st: &mut SettingsState, overlay_open: &mut bool) {
     // 与主窗口相同的两栏模式：外层也必须显式占满剩余区域。
     // `horizontal` 会先按子项最小内容高度收缩，导致右页只剩标题高度。
     let row = ui.available_size();
@@ -58,7 +58,7 @@ pub fn show(ui: &mut Ui, t: &Theme, st: &mut SettingsState) {
             |ui| {
                 ui.set_width(ui.available_width());
                 ui.set_min_size(ui.available_size());
-                panel(ui, t, st);
+                panel(ui, t, st, overlay_open);
             },
         );
         ui.add_space(margin);
@@ -130,7 +130,7 @@ fn rail(ui: &mut Ui, t: &Theme, st: &mut SettingsState) {
 
 // ---------- 右侧面板 ----------
 
-fn panel(ui: &mut Ui, t: &Theme, st: &mut SettingsState) {
+fn panel(ui: &mut Ui, t: &Theme, st: &mut SettingsState, overlay_open: &mut bool) {
     let w = ui.available_width();
     let h = ui.available_height();
     w::card(t, egui::Margin::same(18)).show(ui, |ui| {
@@ -147,6 +147,8 @@ fn panel(ui: &mut Ui, t: &Theme, st: &mut SettingsState) {
                 ui.set_width(ui.available_width());
                 if st.category == 0 {
                     tx_page(ui, t, st);
+                } else if st.category == 2 {
+                    overlay_page(ui, t, overlay_open);
                 } else {
                     // 其余分类：接线里程碑补内容
                     let name = CATEGORIES[st.category];
@@ -167,6 +169,24 @@ fn panel(ui: &mut Ui, t: &Theme, st: &mut SettingsState) {
                 }
             });
     });
+}
+
+/// 「悬浮窗」页：设置窗口是产品入口，开关直接控制独立置顶 viewport。
+fn overlay_page(ui: &mut Ui, t: &Theme, overlay_open: &mut bool) {
+    ui.label(
+        egui::RichText::new("悬浮窗")
+            .size(font::PAGE_TITLE)
+            .strong()
+            .color(t.text),
+    );
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new("在桌面上显示当前说话者。")
+            .size(font::AUX)
+            .color(t.subtext),
+    );
+    ui.add_space(18.0);
+    toggle_row(ui, t, "显示悬浮窗", "独立置顶窗口", overlay_open);
 }
 
 fn section_title(ui: &mut Ui, t: &Theme, text: &str) {
