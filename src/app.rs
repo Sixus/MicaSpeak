@@ -184,89 +184,21 @@ impl MicaApp {
         ctx.theme() == egui::Theme::Dark
     }
 
-    fn cycle_theme(&mut self, ctx: &egui::Context) {
-        let next = match self.theme_pref {
-            None => egui::ThemePreference::Light,
-            Some(egui::ThemePreference::Light) => egui::ThemePreference::Dark,
-            _ => egui::ThemePreference::System,
-        };
-        self.theme_pref = if next == egui::ThemePreference::System {
-            None
-        } else {
-            Some(next)
-        };
-        ctx.set_theme(next);
-    }
-
-    fn cycle_speaking(&mut self) {
-        self.demo.speakers = match self.demo.speakers.len() {
-            0 => vec!["张三"],
-            1 => vec!["张三", "李四"],
-            _ => Vec::new(),
-        };
-    }
-
     // ---------- 窗口骨架 ----------
 
     fn caption_bar(&mut self, ui: &mut egui::Ui, t: &Theme) {
-        // Fixed-state screenshots are the visual acceptance surface. Keep the
-        // switches available for a normal dev run, but never let them alter a
-        // state screenshot's 30px native caption composition.
-        let show_demo = std::env::var("MICASPEAK_UI_STATE")
-            .map(|state| state.trim().is_empty())
-            .unwrap_or(true);
-        let theme_label = match self.theme_pref {
-            None => "主题·跟随",
-            Some(egui::ThemePreference::Light) => "主题·浅",
-            _ => "主题·深",
-        };
-        let mut cycle_theme = false;
-        let mut cycle_speaking = false;
-        let mut toggle_disconnect = false;
-        let mut overlay_open = self.demo.overlay_open;
-        let mut settings_open = self.demo.settings_open;
-
         egui::Panel::top("caption")
             .exact_size(metrics::CAPTION_H)
             .frame(egui::Frame::new())
             .show_separator_line(false)
             .show(ui, |ui| {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    if show_demo {
-                        ui.add_space(8.0);
-                        if demo_pill(ui, t, theme_label, false).clicked() {
-                            cycle_theme = true;
-                        }
-                        ui.add_space(6.0);
-                        if demo_pill(ui, t, "悬浮", overlay_open).clicked() {
-                            overlay_open = !overlay_open;
-                        }
-                        ui.add_space(6.0);
-                        if demo_pill(ui, t, "断线", self.demo.disconnected).clicked() {
-                            toggle_disconnect = true;
-                        }
-                        ui.add_space(6.0);
-                        if demo_pill(ui, t, "说话", !self.demo.speakers.is_empty()).clicked() {
-                            cycle_speaking = true;
-                        }
-                        ui.add_space(6.0);
-                        if demo_pill(ui, t, "设置窗", settings_open).clicked() {
-                            settings_open = !settings_open;
-                        }
-                    }
-
                     // 标题栏空白区（右侧给窗控钮组留位，含按钮间距）：
-                    // 拖动移动窗口 / 双击最大化。固定状态下它从左边开始，
-                    // 与 React 原型的原生 caption 保持一致。
+                    // 拖动移动窗口 / 双击最大化，与原型的原生 caption 保持一致。
                     let buttons_w = 3.0 * metrics::CAPTION_BTN.x + 2.0 * 8.0;
                     let full = ui.available_rect_before_wrap();
-                    let drag_left = if show_demo {
-                        full.left().max(ui.cursor().left())
-                    } else {
-                        full.left()
-                    };
                     let drag_rect = egui::Rect::from_min_max(
-                        egui::pos2(drag_left, full.top()),
+                        full.min,
                         egui::pos2(full.right() - buttons_w, full.bottom()),
                     );
                     let drag = ui.allocate_rect(drag_rect, Sense::drag());
@@ -281,28 +213,6 @@ impl MicaApp {
                     caption_buttons(ui, t);
                 });
             });
-
-        if cycle_theme {
-            self.cycle_theme(ui.ctx());
-        }
-        if cycle_speaking {
-            self.cycle_speaking();
-        }
-        if toggle_disconnect {
-            if self.demo.disconnected {
-                // 再点一次 = 手动恢复
-                self.demo.disconnected = false;
-                self.demo.reconnecting = false;
-                self.demo.reconnect_started = None;
-            } else {
-                self.demo.disconnected = true;
-                self.demo.reconnecting = true;
-                self.demo.disconnect_at = ui.ctx().time();
-                self.demo.reconnect_started = None;
-            }
-        }
-        self.demo.overlay_open = overlay_open;
-        self.demo.settings_open = settings_open;
     }
 
     fn body(&mut self, ui: &mut egui::Ui, t: &Theme) {
@@ -659,7 +569,7 @@ impl MicaApp {
             .show(ui, |ui| {
                 ui.add_space(4.0);
                 ui.set_height(ui.available_height());
-                settings::show(ui, t, &mut self.settings);
+                settings::show(ui, t, &mut self.settings, &mut self.demo.overlay_open);
             });
     }
 }
@@ -761,47 +671,6 @@ fn bookmark_row(
         return Some(ConnectAction::ConnectBookmark(idx));
     }
     None
-}
-
-/// 演示开关小胶囊（MD2 阶段专用，接线时整体移除）。
-fn demo_pill(ui: &mut Ui, t: &Theme, label: &str, active: bool) -> Response {
-    let galley = ui.painter().layout(
-        label.to_owned(),
-        egui::FontId::proportional(font::SECTION),
-        if active { colors::WHITE } else { t.subtext },
-        f32::INFINITY,
-    );
-    let size = Vec2::new(galley.size().x + 16.0, 22.0);
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    let fill = if active {
-        colors::BLUE
-    } else if resp.hovered() {
-        t.hover
-    } else {
-        Color32::TRANSPARENT
-    };
-    if fill != Color32::TRANSPARENT {
-        ui.painter().rect(
-            rect,
-            CornerRadius::same(4),
-            fill,
-            Stroke::NONE,
-            StrokeKind::Inside,
-        );
-    }
-    ui.painter().rect(
-        rect,
-        CornerRadius::same(4),
-        Color32::TRANSPARENT,
-        Stroke::new(1.0, t.input_border),
-        StrokeKind::Inside,
-    );
-    ui.painter().galley(
-        rect.center() - galley.size() / 2.0,
-        galley,
-        if active { colors::WHITE } else { t.subtext },
-    );
-    resp
 }
 
 /// 右上角窗控钮组：最小化 / 最大化 / 关闭（关闭 hover 红）。
