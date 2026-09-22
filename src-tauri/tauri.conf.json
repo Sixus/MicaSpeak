@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MicaSpeak",
+  "version": "0.1.0",
+  "identifier": "com.micaspeak.client",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "MicaSpeak",
+        "width": 420,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 520,
+        "resizable": true,
+        "dataDirectory": "Data/WebView2"
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "icon": []
+  }
+}
