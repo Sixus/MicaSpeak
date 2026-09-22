@@ -125,8 +125,15 @@ fn friendly_error(e: &TslError) -> String {
 }
 
 #[tauri::command]
-pub async fn get_app_snapshot(state: State<'_, AppState>) -> Result<AppSnapshot, String> {
-    Ok(state.snapshot().await)
+pub async fn get_app_snapshot(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppSnapshot, String> {
+    let snap = state.snapshot().await;
+    if let Some(message) = state.take_pending_error().await {
+        let _ = app.emit("error://user", serde_json::json!({ "message": message }));
+    }
+    Ok(snap)
 }
 
 #[tauri::command]
@@ -164,6 +171,8 @@ pub async fn connect(
         payload.server_address = Some(address.clone());
     }
     let _ = app.emit("connection://state", state.connection.lock().await.clone());
+    // 立刻推送快照，让前端马上进入“连接中”状态（否则真实连接过程 UI 无反馈）
+    state.emit_snapshot(&app).await;
     let id = state.next_conn_id.fetch_add(1, Ordering::Relaxed) + 1;
     let (tx, rx) = mpsc::channel(8);
     *state.conn_tx.lock().await = Some(ConnOwner { id, tx });
@@ -236,12 +245,13 @@ async fn disconnect_inner(state: &AppState) {
 }
 
 /// 只有当前连接仍然属于自己时才清理共享状态，避免旧任务清掉新连接。
+/// 注意：不重置 connection payload——失败原因由 publish_error 写入，
+/// 是连接的最终状态，必须保留给用户看。
 async fn cleanup_if_current(state: &AppState, id: u64) {
     let current = state.conn_tx.lock().await.as_ref().map(|o| o.id);
     if current == Some(id) {
         *state.conn_tx.lock().await = None;
         *state.channels.lock().await = Vec::new();
-        *state.connection.lock().await = ConnectionPayload::default();
     }
 }
 

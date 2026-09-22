@@ -72,6 +72,12 @@ impl AppState {
         let _ = app.emit("app://snapshot", self.snapshot().await);
     }
 
+    /// 启动期产生的待提示（如 config 损坏）。在 Webview 尚未就绪时 emit 会丢，
+    /// 所以由首次 get_app_snapshot 取走并补发。
+    pub async fn take_pending_error(&self) -> Option<String> {
+        self.pending_error.lock().await.take()
+    }
+
     pub async fn emit_initial(&self, app: &AppHandle) {
         if !self.runtime_available {
             let _ = app.emit(
@@ -80,9 +86,6 @@ impl AppState {
                     "message": "需要安装 Microsoft Edge WebView2 Runtime"
                 }),
             );
-        }
-        if let Some(message) = self.pending_error.lock().await.take() {
-            let _ = app.emit("error://user", serde_json::json!({ "message": message }));
         }
         self.emit_snapshot(app).await;
     }
