@@ -12,3 +12,7 @@ export async function subscribeSnapshot(onSnapshot: (snapshot: AppSnapshot) => v
 export async function subscribeRuntimeMissing(onMissing: () => void): Promise<UnlistenFn> {
   return listen('runtime://webview2-missing', onMissing)
 }
+
+export async function subscribeUserError(onError: (message: string) => void): Promise<UnlistenFn> {
+  return listen<{ message: string }>('error://user', (event) => onError(event.payload.message))
+}
