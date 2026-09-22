@@ -1,12 +1,15 @@
-use crate::app_state::AppState;
+use crate::app_state::{ActiveConnection, AppState, ConnOwner};
 use crate::persistence::load_identity;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, State};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tsclientlib::prelude::*;
 use tsclientlib::sync::{SyncConnection, SyncConnectionHandle, SyncStreamItem};
-use tsclientlib::{Connection, DisconnectOptions, Identity};
+use tsclientlib::{
+    Connection, DisconnectOptions, Error as TslError, Identity, TemporaryDisconnectReason, TsError,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionPayload {
@@ -60,7 +63,11 @@ pub struct AppSnapshot {
 }
 
 pub enum ConnCommand {
-    SelectChannel { id: u64, password: Option<String> },
+    SelectChannel {
+        id: u64,
+        password: Option<String>,
+        result: oneshot::Sender<Result<(), String>>,
+    },
     Shutdown,
 }
 
@@ -92,6 +99,31 @@ pub fn webview2_available() -> bool {
     }
 }
 
+/// 把协议库错误转成可直接展示的中文；不包含密码等敏感内容。
+fn friendly_error(e: &TslError) -> String {
+    match e {
+        TslError::CommandError(ce) => match ce.error {
+            TsError::ChannelInvalidPassword => "频道密码错误".into(),
+            TsError::ServerInvalidPassword => "服务器密码错误".into(),
+            TsError::PermissionsClientInsufficient => "权限不足，无法执行此操作".into(),
+            ref other => format!("操作失败：{other:?}"),
+        },
+        TslError::ConnectTs(e) => match e {
+            TsError::ServerInvalidPassword => "服务器密码错误".into(),
+            ref other => format!("服务器拒绝连接：{other:?}"),
+        },
+        TslError::ConnectFailed { .. }
+        | TslError::Connect(_)
+        | TslError::ConnectionFailed(_)
+        | TslError::ResolveAddress(_)
+        | TslError::InitserverTimeout
+        | TslError::InitserverWait(_) => {
+            "无法连接服务器，请检查地址和端口是否正确，以及网络是否可用".into()
+        }
+        other => format!("连接错误：{other}"),
+    }
+}
+
 #[tauri::command]
 pub async fn get_app_snapshot(state: State<'_, AppState>) -> Result<AppSnapshot, String> {
     Ok(state.snapshot().await)
@@ -104,9 +136,27 @@ pub async fn connect(
     address: String,
     nickname: String,
     password: Option<String>,
+    bookmark_id: Option<String>,
 ) -> Result<(), String> {
     disconnect_inner(&state).await;
     let identity = load_identity().map_err(|e| format!("身份文件无法读取：{e}"))?;
+    let mut password = password.filter(|p| !p.is_empty());
+    let mut auto_join = None;
+    if let Some(id) = bookmark_id.as_deref() {
+        let cfg = state.config.lock().await.clone();
+        if let Some(bookmark) = cfg.bookmarks.iter().find(|b| b.id == id) {
+            if password.is_none() {
+                password = bookmark.password.clone().filter(|p| !p.is_empty());
+            }
+            auto_join = bookmark.last_channel.clone();
+        }
+    }
+    *state.active.lock().await = Some(ActiveConnection {
+        address: address.clone(),
+        nickname: nickname.clone(),
+        password: password.clone(),
+        bookmark_id,
+    });
     {
         let mut payload = state.connection.lock().await;
         payload.status = "connecting".into();
@@ -114,11 +164,20 @@ pub async fn connect(
         payload.server_address = Some(address.clone());
     }
     let _ = app.emit("connection://state", state.connection.lock().await.clone());
+    let id = state.next_conn_id.fetch_add(1, Ordering::Relaxed) + 1;
     let (tx, rx) = mpsc::channel(8);
-    *state.conn_tx.lock().await = Some(tx);
+    *state.conn_tx.lock().await = Some(ConnOwner { id, tx });
     let shared = state.inner().clone();
     tauri::async_runtime::spawn(connection_loop(
-        app, shared, rx, address, nickname, password, identity,
+        app,
+        shared,
+        rx,
+        id,
+        address,
+        nickname,
+        password,
+        identity,
+        auto_join,
     ));
     Ok(())
 }
@@ -131,13 +190,17 @@ pub async fn disconnect(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn reconnect(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let active = state.active.lock().await.clone();
+    if let Some(a) = active {
+        return connect(app, state, a.address, a.nickname, a.password, a.bookmark_id).await;
+    }
     let cfg = state.config.lock().await.clone();
     let b = cfg
         .bookmarks
         .first()
         .ok_or_else(|| "没有可重连的书签".to_string())?
         .clone();
-    connect(app, state, b.address, b.nickname, b.password).await
+    connect(app, state, b.address, b.nickname, b.password, Some(b.id)).await
 }
 
 #[tauri::command]
@@ -150,32 +213,49 @@ pub async fn select_channel(
         .conn_tx
         .lock()
         .await
-        .clone()
+        .as_ref()
+        .map(|o| o.tx.clone())
         .ok_or_else(|| "当前没有活动连接".to_string())?;
+    let (result_tx, result_rx) = oneshot::channel();
     tx.send(ConnCommand::SelectChannel {
         id: channel_id,
         password,
+        result: result_tx,
     })
     .await
-    .map_err(|_| "连接任务已结束".to_string())
+    .map_err(|_| "连接任务已结束".to_string())?;
+    result_rx.await.map_err(|_| "连接任务已结束".to_string())?
 }
 
 async fn disconnect_inner(state: &AppState) {
-    if let Some(tx) = state.conn_tx.lock().await.take() {
-        let _ = tx.send(ConnCommand::Shutdown).await;
+    if let Some(owner) = state.conn_tx.lock().await.take() {
+        let _ = owner.tx.send(ConnCommand::Shutdown).await;
     }
     *state.channels.lock().await = Vec::new();
     *state.connection.lock().await = ConnectionPayload::default();
 }
 
+/// 只有当前连接仍然属于自己时才清理共享状态，避免旧任务清掉新连接。
+async fn cleanup_if_current(state: &AppState, id: u64) {
+    let current = state.conn_tx.lock().await.as_ref().map(|o| o.id);
+    if current == Some(id) {
+        *state.conn_tx.lock().await = None;
+        *state.channels.lock().await = Vec::new();
+        *state.connection.lock().await = ConnectionPayload::default();
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn connection_loop(
     app: AppHandle,
     state: AppState,
     mut rx: mpsc::Receiver<ConnCommand>,
+    id: u64,
     address: String,
     nickname: String,
     password: Option<String>,
     identity: Identity,
+    auto_join: Option<String>,
 ) {
     let options = Connection::build(address.clone())
         .name(nickname)
@@ -188,31 +268,46 @@ async fn connection_loop(
     let connection = match options.connect() {
         Ok(c) => c,
         Err(e) => {
-            publish_error(&app, &state, format!("连接失败：{e}"), Some(address)).await;
+            publish_error(&app, &state, friendly_error(&e), Some(address)).await;
+            cleanup_if_current(&state, id).await;
             return;
         }
     };
     let mut sync: SyncConnection = connection.into();
     let mut handle = sync.get_handle();
+    let mut auto_join = auto_join.filter(|name| !name.is_empty());
     loop {
         tokio::select! {
             command = rx.recv() => match command {
                 Some(ConnCommand::Shutdown) | None => { let _ = handle.disconnect(DisconnectOptions::new()).await; break; }
-                Some(ConnCommand::SelectChannel { id, password }) => {
-                    if let Err(e) = move_to_channel(&mut handle, id, password).await { publish_error(&app, &state, format!("进入频道失败：{e}"), None).await; }
+                Some(ConnCommand::SelectChannel { id: channel_id, password, result }) => {
+                    let res = move_to_channel(&mut handle, channel_id, password).await;
+                    let _ = result.send(res.clone());
+                    match res {
+                        Ok(()) => save_last_channel(&app, &state, channel_id).await,
+                        Err(message) => {
+                            let _ = app.emit("error://user", serde_json::json!({ "message": message }));
+                        }
+                    }
                 }
             },
             item = sync.next() => match item {
-                Some(Ok(SyncStreamItem::BookEvents(_))) => publish_state(&app, &state, &mut handle, &address).await,
-                Some(Ok(SyncStreamItem::DisconnectedTemporarily(reason))) => publish_error(&app, &state, format!("连接已断开：{reason:?}"), Some(address.clone())).await,
-                Some(Err(e)) => { publish_error(&app, &state, format!("连接错误：{e}"), Some(address.clone())).await; break; }
+                Some(Ok(SyncStreamItem::BookEvents(_))) => {
+                    publish_state(&app, &state, &mut handle, &address).await;
+                    if let Some(name) = auto_join.take() {
+                        try_auto_join(&app, &state, &mut handle, &name).await;
+                    }
+                }
+                Some(Ok(SyncStreamItem::DisconnectedTemporarily(reason))) => {
+                    publish_temporary_disconnect(&app, &state, reason, address.clone()).await;
+                }
+                Some(Err(e)) => { publish_error(&app, &state, friendly_error(&e), Some(address.clone())).await; break; }
                 None => break,
                 _ => {}
             }
         }
     }
-    *state.conn_tx.lock().await = None;
-    *state.connection.lock().await = ConnectionPayload::default();
+    cleanup_if_current(&state, id).await;
     state.emit_snapshot(&app).await;
 }
 
@@ -305,7 +400,80 @@ async fn move_to_channel(
     handle
         .send_command(packet.to_packet())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| friendly_error(&e))
+}
+
+/// 进入频道成功后把频道名写入 config（原子写盘），并同时记录到对应书签。
+async fn save_last_channel(app: &AppHandle, state: &AppState, channel_id: u64) {
+    let name = state
+        .channels
+        .lock()
+        .await
+        .iter()
+        .find(|c| c.id == channel_id)
+        .map(|c| c.name.clone());
+    let Some(name) = name else { return };
+    let active = state.active.lock().await.clone();
+    let mut config = state.config.lock().await;
+    config.last_channel = Some(name.clone());
+    if let Some(bookmark) = config.bookmarks.iter_mut().find(|b| {
+        active.as_ref().is_some_and(|a| {
+            a.bookmark_id.as_deref() == Some(b.id.as_str()) || a.address == b.address
+        })
+    }) {
+        bookmark.last_channel = Some(name);
+    }
+    if let Err(e) = crate::persistence::save_config(&config) {
+        let _ = app.emit(
+            "error://user",
+            serde_json::json!({ "message": format!("保存配置失败：{e}") }),
+        );
+    }
+}
+
+/// 自动回连上次频道；密码频道没有已存密码，静默跳过，由用户手动输入。
+async fn try_auto_join(
+    app: &AppHandle,
+    state: &AppState,
+    handle: &mut SyncConnectionHandle,
+    name: &str,
+) {
+    let target = state
+        .channels
+        .lock()
+        .await
+        .iter()
+        .find(|c| c.name == name && !c.password)
+        .map(|c| c.id);
+    if let Some(id) = target {
+        if let Err(message) = move_to_channel(handle, id, None).await {
+            let _ = app.emit(
+                "error://user",
+                serde_json::json!({ "message": format!("自动进入上次频道失败：{message}") }),
+            );
+        }
+    }
+}
+
+async fn publish_temporary_disconnect(
+    app: &AppHandle,
+    state: &AppState,
+    reason: TemporaryDisconnectReason,
+    address: String,
+) {
+    let detail = match reason {
+        TemporaryDisconnectReason::Serverstop => "服务器已关闭".to_string(),
+        TemporaryDisconnectReason::Timeout(_) => "网络超时".to_string(),
+    };
+    let payload = ConnectionPayload {
+        status: "disconnected".into(),
+        reason: Some(format!("连接暂时断开（{detail}），正在尝试恢复…")),
+        server_name: None,
+        server_address: Some(address),
+    };
+    *state.connection.lock().await = payload.clone();
+    let _ = app.emit("connection://state", payload);
+    state.emit_snapshot(app).await;
 }
 
 async fn publish_error(app: &AppHandle, state: &AppState, reason: String, address: Option<String>) {

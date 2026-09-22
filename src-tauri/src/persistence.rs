@@ -67,22 +67,26 @@ fn atomic_write(path: &PathBuf, bytes: &[u8]) -> io::Result<()> {
     fs::rename(tmp, path)
 }
 
-pub fn load_config() -> io::Result<AppConfig> {
+/// 返回配置与给用户的提示；提示非空表示原文件损坏，已备份并恢复默认。
+pub fn load_config() -> io::Result<(AppConfig, Option<String>)> {
     let path = data_root().join("config.json");
     match fs::read(&path) {
         Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(config) => Ok(config),
+            Ok(config) => Ok((config, None)),
             Err(_) => {
                 let _ = fs::rename(&path, path.with_extension("json.bak"));
                 let config = AppConfig::default();
                 let _ = atomic_write(&path, &serde_json::to_vec_pretty(&config).unwrap());
-                Ok(config)
+                Ok((
+                    config,
+                    Some("配置文件 config.json 已损坏，已自动备份为 config.json.bak 并恢复默认设置。".into()),
+                ))
             }
         },
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             let config = AppConfig::default();
             let _ = atomic_write(&path, &serde_json::to_vec_pretty(&config).unwrap());
-            Ok(config)
+            Ok((config, None))
         }
         Err(e) => Err(e),
     }
@@ -111,6 +115,7 @@ pub fn load_identity() -> io::Result<Identity> {
 
 #[tauri::command]
 pub async fn save_bookmark(
+    app: tauri::AppHandle,
     state: State<'_, crate::app_state::AppState>,
     address: String,
     nickname: String,
@@ -133,15 +138,22 @@ pub async fn save_bookmark(
             last_channel: None,
         });
     }
-    save_config(&config).map_err(|e| format!("保存配置失败：{e}"))
+    save_config(&config).map_err(|e| format!("保存配置失败：{e}"))?;
+    drop(config);
+    state.emit_snapshot(&app).await;
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn delete_bookmark(
+    app: tauri::AppHandle,
     state: State<'_, crate::app_state::AppState>,
     id: String,
 ) -> Result<(), String> {
     let mut config = state.config.lock().await;
     config.bookmarks.retain(|bookmark| bookmark.id != id);
-    save_config(&config).map_err(|e| format!("保存配置失败：{e}"))
+    save_config(&config).map_err(|e| format!("保存配置失败：{e}"))?;
+    drop(config);
+    state.emit_snapshot(&app).await;
+    Ok(())
 }
