@@ -10,6 +10,7 @@ use tsclientlib::sync::{SyncConnection, SyncConnectionHandle, SyncStreamItem};
 use tsclientlib::{
     Connection, DisconnectOptions, Error as TslError, Identity, TemporaryDisconnectReason, TsError,
 };
+use tracing::debug;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionPayload {
@@ -158,6 +159,7 @@ pub async fn connect(
             auto_join = bookmark.last_channel.clone();
         }
     }
+    debug!(?bookmark_id, ?auto_join, "connect: bookmark resolved");
     *state.active.lock().await = Some(ActiveConnection {
         address: address.clone(),
         nickname: nickname.clone(),
@@ -248,11 +250,14 @@ async fn disconnect_inner(state: &AppState) {
 /// 注意：不重置 connection payload——失败原因由 publish_error 写入，
 /// 是连接的最终状态，必须保留给用户看。
 async fn cleanup_if_current(state: &AppState, id: u64) {
-    let current = state.conn_tx.lock().await.as_ref().map(|o| o.id);
-    if current == Some(id) {
+    if is_current(state, id).await {
         *state.conn_tx.lock().await = None;
         *state.channels.lock().await = Vec::new();
     }
+}
+
+async fn is_current(state: &AppState, id: u64) -> bool {
+    state.conn_tx.lock().await.as_ref().map(|o| o.id) == Some(id)
 }
 
 /// 连接任务：命令循环只通过 handle 操作连接；
@@ -349,28 +354,45 @@ async fn driver_loop(
     id: u64,
 ) {
     while let Some(item) = sync.next().await {
+        // 连接已被替换/断开（owner 换人）后不再发布任何状态，
+        // 否则会把 disconnect 重置好的界面覆盖成幽灵"已连接"。
+        if !is_current(&state, id).await {
+            break;
+        }
         match item {
             Ok(SyncStreamItem::BookEvents(_)) => {
                 publish_state(&app, &state, &mut sync, &address).await;
-                if let Some(name) = auto_join.take() {
-                    // 无密码的上次频道通过命令通道重新排队执行（密码频道需用户手动输入）
-                    let target = state
+                // 首次 BookEvents 时频道列表可能尚未就绪：找不到目标就保留
+                // auto_join 等下一次事件重试，找到（含密码频道）才消费掉。
+                if let Some(name) = &auto_join {
+                    let find = state
                         .channels
                         .lock()
                         .await
                         .iter()
-                        .find(|c| c.name == name && !c.password)
-                        .map(|c| c.id);
-                    if let (Some(channel_id), Some(cmd_tx)) = (target, &cmd_tx) {
-                        let (result, _) = oneshot::channel();
-                        let _ = cmd_tx
-                            .clone()
-                            .send(ConnCommand::SelectChannel {
-                                id: channel_id,
-                                password: None,
-                                result,
-                            })
-                            .await;
+                        .find(|c| c.name == *name)
+                        .map(|c| (c.id, c.password));
+                    debug!(name = %name, ?find, "driver: auto-join target");
+                    match find {
+                        Some((channel_id, false)) => {
+                            auto_join = None;
+                            if let Some(cmd_tx) = &cmd_tx {
+                                let (result, _) = oneshot::channel();
+                                let _ = cmd_tx
+                                    .clone()
+                                    .send(ConnCommand::SelectChannel {
+                                        id: channel_id,
+                                        password: None,
+                                        result,
+                                    })
+                                    .await;
+                            }
+                        }
+                        Some((_, true)) => {
+                            // 密码频道没有已存密码，静默跳过（设计内：用户手动输入）
+                            auto_join = None;
+                        }
+                        None => {}
                     }
                 }
             }
