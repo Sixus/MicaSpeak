@@ -255,7 +255,11 @@ async fn cleanup_if_current(state: &AppState, id: u64) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// 连接任务：命令循环只通过 handle 操作连接；
+/// 真正驱动事件流的轮询任务见 driver_loop。
+/// 注意：绝不能在轮询流的同一条任务里 await handle 操作——
+/// handle 调用的闭包要等下一次流轮询才执行，会造成自死锁
+/// （M1 期间"进入频道后 ~25 秒掉线"的根因）。
 async fn connection_loop(
     app: AppHandle,
     state: AppState,
@@ -285,35 +289,98 @@ async fn connection_loop(
     };
     let mut sync: SyncConnection = connection.into();
     let mut handle = sync.get_handle();
-    let mut auto_join = auto_join.filter(|name| !name.is_empty());
-    loop {
-        tokio::select! {
-            command = rx.recv() => match command {
-                Some(ConnCommand::Shutdown) | None => { let _ = handle.disconnect(DisconnectOptions::new()).await; break; }
-                Some(ConnCommand::SelectChannel { id: channel_id, password, result }) => {
-                    let res = move_to_channel(&mut handle, channel_id, password).await;
-                    let _ = result.send(res.clone());
-                    match res {
-                        Ok(()) => save_last_channel(&app, &state, channel_id).await,
-                        Err(message) => {
-                            let _ = app.emit("error://user", serde_json::json!({ "message": message }));
-                        }
+
+    // 事件驱动任务：独占轮询事件流，负责发布状态与错误。
+    let driver_app = app.clone();
+    let driver_state = state.clone();
+    let driver_address = address.clone();
+    let auto_tx = state
+        .conn_tx
+        .lock()
+        .await
+        .as_ref()
+        .map(|o| o.tx.clone());
+    tauri::async_runtime::spawn(driver_loop(
+        driver_app,
+        driver_state,
+        sync,
+        driver_address,
+        auto_tx,
+        auto_join,
+        id,
+    ));
+
+    // 命令循环：处理前端命令，经 handle 操作连接（驱动任务保持轮询）。
+    while let Some(command) = rx.recv().await {
+        match command {
+            ConnCommand::Shutdown => {
+                let _ = handle.disconnect(DisconnectOptions::new()).await;
+                break;
+            }
+            ConnCommand::SelectChannel {
+                id: channel_id,
+                password,
+                result,
+            } => {
+                let res = move_to_channel(&mut handle, channel_id, password).await;
+                let _ = result.send(res.clone());
+                match res {
+                    Ok(()) => save_last_channel(&app, &state, channel_id).await,
+                    Err(message) => {
+                        let _ = app.emit(
+                            "error://user",
+                            serde_json::json!({ "message": message }),
+                        );
                     }
                 }
-            },
-            item = sync.next() => match item {
-                Some(Ok(SyncStreamItem::BookEvents(_))) => {
-                    publish_state(&app, &state, &mut handle, &address).await;
-                    if let Some(name) = auto_join.take() {
-                        try_auto_join(&app, &state, &mut handle, &name).await;
+            }
+        }
+    }
+}
+
+/// 独占轮询事件流：转发状态/错误事件，并在首次连上后自动回连上次频道。
+async fn driver_loop(
+    app: AppHandle,
+    state: AppState,
+    mut sync: SyncConnection,
+    address: String,
+    cmd_tx: Option<mpsc::Sender<ConnCommand>>,
+    mut auto_join: Option<String>,
+    id: u64,
+) {
+    while let Some(item) = sync.next().await {
+        match item {
+            Ok(SyncStreamItem::BookEvents(_)) => {
+                publish_state(&app, &state, &mut sync, &address).await;
+                if let Some(name) = auto_join.take() {
+                    // 无密码的上次频道通过命令通道重新排队执行（密码频道需用户手动输入）
+                    let target = state
+                        .channels
+                        .lock()
+                        .await
+                        .iter()
+                        .find(|c| c.name == name && !c.password)
+                        .map(|c| c.id);
+                    if let (Some(channel_id), Some(cmd_tx)) = (target, &cmd_tx) {
+                        let (result, _) = oneshot::channel();
+                        let _ = cmd_tx
+                            .clone()
+                            .send(ConnCommand::SelectChannel {
+                                id: channel_id,
+                                password: None,
+                                result,
+                            })
+                            .await;
                     }
                 }
-                Some(Ok(SyncStreamItem::DisconnectedTemporarily(reason))) => {
-                    publish_temporary_disconnect(&app, &state, reason, address.clone()).await;
-                }
-                Some(Err(e)) => { publish_error(&app, &state, friendly_error(&e), Some(address.clone())).await; break; }
-                None => break,
-                _ => {}
+            }
+            Ok(SyncStreamItem::DisconnectedTemporarily(reason)) => {
+                publish_temporary_disconnect(&app, &state, reason, address.clone()).await;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                publish_error(&app, &state, friendly_error(&e), Some(address.clone())).await;
+                break;
             }
         }
     }
@@ -324,71 +391,56 @@ async fn connection_loop(
 async fn publish_state(
     app: &AppHandle,
     state: &AppState,
-    handle: &mut SyncConnectionHandle,
+    sync: &mut SyncConnection,
     address: &str,
 ) {
-    let result = handle
-        .with_connection(|connection| {
-            connection.get_state().ok().map(|book| {
-                (
-                    book.server.name.clone(),
-                    book.own_client,
-                    book.channels
-                        .values()
-                        .map(|c| {
-                            (
-                                c.id.0,
-                                c.parent.0,
-                                c.name.clone(),
-                                c.order.0,
-                                c.has_password,
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                    book.clients
-                        .values()
-                        .map(|c| (c.id.0, c.name.clone(), c.channel.0))
-                        .collect::<Vec<_>>(),
-                )
-            })
-        })
-        .await;
-    match result.ok().flatten() {
-        Some((server_name, own_client, channels, clients)) => {
-            let client_nodes = clients;
-            let nodes = channels
-                .into_iter()
-                .map(|(id, parent, name, order, password)| ChannelNode {
-                    id,
-                    parent_id: (parent != 0).then_some(parent),
-                    name,
-                    order,
-                    password: password.unwrap_or(false),
-                    clients: client_nodes
-                        .iter()
-                        .filter(|(_, _, channel)| *channel == id)
-                        .map(|(cid, name, _)| ClientNode {
-                            id: *cid as u64,
-                            name: name.clone(),
-                            channel_id: id,
-                            is_self: *cid as u16 == own_client.0,
-                        })
-                        .collect(),
+    // 驱动任务独占轮询，可直接解引用读取连接数据（不经过 handle，避免死锁）
+    let Some(book) = sync.get_state().ok() else {
+        return;
+    };
+    let server_name = book.server.name.clone();
+    let own_client = book.own_client;
+    let channels = book
+        .channels
+        .values()
+        .map(|c| (c.id.0, c.parent.0, c.name.clone(), c.order.0, c.has_password))
+        .collect::<Vec<_>>();
+    let clients = book
+        .clients
+        .values()
+        .map(|c| (c.id.0, c.name.clone(), c.channel.0))
+        .collect::<Vec<_>>();
+
+    let nodes = channels
+        .into_iter()
+        .map(|(id, parent, name, order, password)| ChannelNode {
+            id,
+            parent_id: (parent != 0).then_some(parent),
+            name,
+            order,
+            password: password.unwrap_or(false),
+            clients: clients
+                .iter()
+                .filter(|(_, _, channel)| *channel == id)
+                .map(|(cid, name, _)| ClientNode {
+                    id: u64::from(*cid),
+                    name: name.clone(),
+                    channel_id: id,
+                    is_self: *cid as u16 == own_client.0,
                 })
-                .collect::<Vec<_>>();
-            *state.connection.lock().await = ConnectionPayload {
-                status: "connected".into(),
-                reason: None,
-                server_name: Some(server_name),
-                server_address: Some(address.to_string()),
-            };
-            *state.channels.lock().await = nodes.clone();
-            let _ = app.emit("connection://state", state.connection.lock().await.clone());
-            let _ = app.emit("channel://tree", nodes);
-            state.emit_snapshot(app).await;
-        }
-        None => {}
-    }
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    *state.connection.lock().await = ConnectionPayload {
+        status: "connected".into(),
+        reason: None,
+        server_name: Some(server_name),
+        server_address: Some(address.to_string()),
+    };
+    *state.channels.lock().await = nodes.clone();
+    let _ = app.emit("connection://state", state.connection.lock().await.clone());
+    let _ = app.emit("channel://tree", nodes);
+    state.emit_snapshot(app).await;
 }
 
 async fn move_to_channel(
@@ -438,30 +490,6 @@ async fn save_last_channel(app: &AppHandle, state: &AppState, channel_id: u64) {
             "error://user",
             serde_json::json!({ "message": format!("保存配置失败：{e}") }),
         );
-    }
-}
-
-/// 自动回连上次频道；密码频道没有已存密码，静默跳过，由用户手动输入。
-async fn try_auto_join(
-    app: &AppHandle,
-    state: &AppState,
-    handle: &mut SyncConnectionHandle,
-    name: &str,
-) {
-    let target = state
-        .channels
-        .lock()
-        .await
-        .iter()
-        .find(|c| c.name == name && !c.password)
-        .map(|c| c.id);
-    if let Some(id) = target {
-        if let Err(message) = move_to_channel(handle, id, None).await {
-            let _ = app.emit(
-                "error://user",
-                serde_json::json!({ "message": format!("自动进入上次频道失败：{message}") }),
-            );
-        }
     }
 }
 
