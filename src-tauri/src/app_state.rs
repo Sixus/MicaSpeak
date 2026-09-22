@@ -28,6 +28,9 @@ pub struct AppState {
     pub conn_tx: Arc<Mutex<Option<ConnOwner>>>,
     pub active: Arc<Mutex<Option<ActiveConnection>>>,
     pub next_conn_id: Arc<AtomicU64>,
+    // WebView2 安装状态进程内不变；只在外层 main 窗口创建前检测一次，
+    // 避免在异步命令里反复同步 spawn reg（曾观察到偶发挂死）。
+    runtime_available: bool,
     pending_error: Arc<Mutex<Option<String>>>,
 }
 
@@ -42,17 +45,26 @@ impl AppState {
             conn_tx: Arc::new(Mutex::new(None)),
             active: Arc::new(Mutex::new(None)),
             next_conn_id: Arc::new(AtomicU64::new(0)),
+            runtime_available: crate::conn::webview2_available(),
             pending_error: Arc::new(Mutex::new(notice)),
         }
     }
 
     pub async fn snapshot(&self) -> AppSnapshot {
+        // 注意：不能在同一个结构体字面量里对同一 tokio Mutex 加锁两次——
+        // 临时 MutexGuard 活到整条 let 语句结束，第二次 lock() 会自己等自己死锁。
+        let connection = self.connection.lock().await.clone();
+        let channels = self.channels.lock().await.clone();
+        let (bookmarks, last_channel) = {
+            let config = self.config.lock().await;
+            (config.public_bookmarks(), config.last_channel.clone())
+        };
         AppSnapshot {
-            connection: self.connection.lock().await.clone(),
-            channels: self.channels.lock().await.clone(),
-            bookmarks: self.config.lock().await.public_bookmarks(),
-            last_channel: self.config.lock().await.last_channel.clone(),
-            runtime_available: crate::conn::webview2_available(),
+            connection,
+            channels,
+            bookmarks,
+            last_channel,
+            runtime_available: self.runtime_available,
         }
     }
 
@@ -61,7 +73,7 @@ impl AppState {
     }
 
     pub async fn emit_initial(&self, app: &AppHandle) {
-        if !crate::conn::webview2_available() {
+        if !self.runtime_available {
             let _ = app.emit(
                 "runtime://webview2-missing",
                 serde_json::json!({
