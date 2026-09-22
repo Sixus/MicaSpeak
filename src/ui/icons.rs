@@ -61,7 +61,13 @@ pub fn draw(painter: &Painter, center: Pos2, size: f32, icon: Icon, color: Color
             rect((5.0, 10.5), (19.0, 20.0), 2.0);
             // 挂钩：左侧上行 → 顶部半圆 → 右侧下行
             let mut pts = vec![map((8.0, 10.5)), map((8.0, 7.5))];
-            pts.extend(arc(12.0, 7.5, 4.0, std::f32::consts::PI, std::f32::consts::TAU));
+            pts.extend(arc(
+                12.0,
+                7.5,
+                4.0,
+                std::f32::consts::PI,
+                std::f32::consts::TAU,
+            ));
             pts.push(map((16.0, 10.5)));
             painter.add(Shape::line(pts, st));
         }
@@ -75,7 +81,13 @@ pub fn draw(painter: &Painter, center: Pos2, size: f32, icon: Icon, color: Color
             line(&[(12.0, 17.0), (12.0, 21.0)]);
             line(&[(9.0, 21.0), (15.0, 21.0)]);
         }
-        Icon::Send => line(&[(4.0, 12.0), (20.0, 4.0), (14.0, 20.0), (11.0, 14.0), (4.0, 12.0)]),
+        Icon::Send => line(&[
+            (4.0, 12.0),
+            (20.0, 4.0),
+            (14.0, 20.0),
+            (11.0, 14.0),
+            (4.0, 12.0),
+        ]),
         Icon::Gear => {
             circle((12.0, 12.0), 3.0);
             // 8 根 45° 均布的短齿（r 7.5→9.5），与设计源码 path 一致

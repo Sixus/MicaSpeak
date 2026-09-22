@@ -125,18 +125,18 @@ impl Theme {
         card: rgba(255, 255, 255, 219), // 0.86
         card_solid: Color32::from_rgb(0xFF, 0xFF, 0xFF),
         text: Color32::from_rgb(0x1A, 0x1A, 0x1A),
-        subtext: rgba(0, 0, 0, 143), // 0.56
-        faint: rgba(0, 0, 0, 97),    // 0.38
-        border: rgba(0, 0, 0, 18),   // 0.07
-        divider: rgba(0, 0, 0, 15),  // 0.06
-        input_bg: rgba(255, 255, 255, 184), // 0.72
-        input_border: rgba(0, 0, 0, 31),    // 0.12
-        input_bottom: rgba(0, 0, 0, 102),   // 0.40
-        hover: rgba(0, 0, 0, 10),           // 0.04
-        speaking: rgba(0, 120, 212, 33),    // 0.13
+        subtext: rgba(0, 0, 0, 143),             // 0.56
+        faint: rgba(0, 0, 0, 97),                // 0.38
+        border: rgba(0, 0, 0, 18),               // 0.07
+        divider: rgba(0, 0, 0, 15),              // 0.06
+        input_bg: rgba(255, 255, 255, 184),      // 0.72
+        input_border: rgba(0, 0, 0, 31),         // 0.12
+        input_bottom: rgba(0, 0, 0, 102),        // 0.40
+        hover: rgba(0, 0, 0, 10),                // 0.04
+        speaking: rgba(0, 120, 212, 33),         // 0.13
         speaking_border: rgba(0, 120, 212, 115), // 0.45
-        chip: rgba(0, 0, 0, 13),            // 0.05
-        scrim: rgba(240, 240, 240, 89),     // 0.35
+        chip: rgba(0, 0, 0, 13),                 // 0.05
+        scrim: rgba(240, 240, 240, 89),          // 0.35
     };
 
     pub const DARK: Theme = Theme {
@@ -149,18 +149,18 @@ impl Theme {
         card: rgba(43, 43, 43, 219),
         card_solid: Color32::from_rgb(0x2B, 0x2B, 0x2B),
         text: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-        subtext: rgba(255, 255, 255, 158), // 0.62
-        faint: rgba(255, 255, 255, 102),   // 0.40
-        border: rgba(255, 255, 255, 23),   // 0.09
-        divider: rgba(255, 255, 255, 18),  // 0.07
-        input_bg: rgba(255, 255, 255, 15), // 0.06
-        input_border: rgba(255, 255, 255, 31), // 0.12
-        input_bottom: rgba(255, 255, 255, 89), // 0.35
-        hover: rgba(255, 255, 255, 15),        // 0.06
-        speaking: rgba(0, 120, 212, 71),       // 0.28
+        subtext: rgba(255, 255, 255, 158),        // 0.62
+        faint: rgba(255, 255, 255, 102),          // 0.40
+        border: rgba(255, 255, 255, 23),          // 0.09
+        divider: rgba(255, 255, 255, 18),         // 0.07
+        input_bg: rgba(255, 255, 255, 15),        // 0.06
+        input_border: rgba(255, 255, 255, 31),    // 0.12
+        input_bottom: rgba(255, 255, 255, 89),    // 0.35
+        hover: rgba(255, 255, 255, 15),           // 0.06
+        speaking: rgba(0, 120, 212, 71),          // 0.28
         speaking_border: rgba(64, 164, 255, 140), // 0.55
-        chip: rgba(255, 255, 255, 26),         // 0.10
-        scrim: rgba(20, 20, 20, 89),           // 0.35
+        chip: rgba(255, 255, 255, 26),            // 0.10
+        scrim: rgba(20, 20, 20, 89),              // 0.35
     };
 
     /// 按当前明暗选套色。

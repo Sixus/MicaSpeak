@@ -1,0 +1,10 @@
+{
+  "description": "MicaSpeak is a sleek voice-chat client designed for Windows 11, offering intuitive communication features and a user-friendly interface for seamless connectivity.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

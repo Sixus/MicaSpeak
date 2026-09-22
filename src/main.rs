@@ -83,8 +83,7 @@ fn find_font(prefixes: &[&str], exact: &str) -> Option<Vec<u8>> {
         .filter_map(|e| e.file_name().to_str().map(|s| s.to_owned()))
         .filter(|name| {
             let lower = name.to_ascii_lowercase();
-            lower.ends_with(".ttf")
-                && prefixes.iter().any(|p| lower.starts_with(p))
+            lower.ends_with(".ttf") && prefixes.iter().any(|p| lower.starts_with(p))
         })
         .collect();
     hits.sort();
