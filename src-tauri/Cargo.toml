@@ -25,6 +25,8 @@ tsproto-packets = { path = "vendor/tsproto-packets" }
 # 采集编码用；与 tsclientlib audio feature 锁定同一版本
 audiopus = "0.3.0-rc.0"
 cpal = "0.18"
+# M3 B：降噪与 VAD（任务卡白名单依赖，锁小版本）。
+nnnoiseless = "0.5.2"
 
 # M3：WH_KEYBOARD_LL 低级键盘钩子。复用 Cargo.lock 已有的 0.61.3，
 # 只开任务卡白名单的三个 feature（docs/07 提示词）。

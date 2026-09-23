@@ -312,6 +312,18 @@ async fn connection_loop(
     let (audio_tx, audio_rx) = mpsc::channel(SEND_QUEUE);
     tauri::async_runtime::spawn(send_task(audio_handle, audio_rx));
     state.audio.register_connection(id, audio_tx);
+    // M3：连接建立时用 config 里的语音参数初始化音频管理器（模式/阈值/降噪/设备）。
+    {
+        let config = state.config.lock().await;
+        let v = &config.voice;
+        state.audio.set_voice_params(crate::audio::VoiceParams {
+            mode: v.mode.clone(),
+            vad_threshold: v.vad_threshold,
+            denoise: v.denoise,
+            input_device: v.input_device.clone(),
+            output_device: v.output_device.clone(),
+        });
+    }
 
     // 事件驱动任务：独占轮询事件流，负责发布状态与错误。
     let driver_app = app.clone();

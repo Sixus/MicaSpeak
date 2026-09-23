@@ -93,3 +93,26 @@ button:disabled { cursor: default; opacity: .55; }
   .setting-hint-bad { color: #e5484d; }
   .setting-row .secondary-button.capturing { color: #4ba3e8; border-color: #4ba3e8; background: rgba(75,163,232,.08); }
 }
+
+/* M3 B4 语音设置控件 */
+.mode-chip { flex: 1; min-height: 36px; border: 1px solid rgba(0,0,0,.12); border-radius: 5px; background: rgba(255,255,255,.6); color: #262a30; font-size: 12px; }
+.mode-chip.active { color: #fff; background: #0078d4; border-color: #0078d4; font-weight: 600; }
+.slider-row { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #60646b; }
+.slider-row input[type="range"] { flex: 1; accent-color: #0078d4; }
+.slider-value { min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+.prob-meter { flex: 1; }
+.prob-meter .level-fill { width: 0; }
+.check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1a1a1a; cursor: pointer; }
+.check-row input { width: 15px; height: 15px; accent-color: #0078d4; }
+.select-row { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #60646b; }
+.select-row select { flex: 1; max-width: 320px; min-height: 32px; padding: 0 6px; border: 1px solid rgba(0,0,0,.12); border-radius: 5px; background: rgba(255,255,255,.72); color: #1a1a1a; outline: none; }
+.settings-link { margin-left: auto; border: 0; background: transparent; color: #0078d4; font-size: 12px; cursor: pointer; }
+.settings-link:hover { text-decoration: underline; }
+@media (prefers-color-scheme: dark) {
+  .mode-chip { border-color: rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: rgba(255,255,255,.85); }
+  .mode-chip.active { background: #0078d4; border-color: #0078d4; color: #fff; }
+  .check-row { color: rgba(255,255,255,.85); }
+  .select-row { color: rgba(255,255,255,.62); }
+  .select-row select { border-color: rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: #fff; }
+  .select-row select option { background: #2b2b2b; color: #fff; }
+}

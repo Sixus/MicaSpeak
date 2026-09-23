@@ -29,7 +29,7 @@ export async function subscribeTalking(onTalking: (payload: TalkingPayload) => v
   return listen<TalkingPayload>('voice://talking', (event) => onTalking(event.payload))
 }
 
-export type LevelPayload = { mic: number; out: number }
+export type LevelPayload = { mic: number; out: number; prob: number }
 
 export async function subscribeLevel(onLevel: (payload: LevelPayload) => void): Promise<UnlistenFn> {
   return listen<LevelPayload>('voice://level', (event) => onLevel(event.payload))

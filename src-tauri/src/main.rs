@@ -10,7 +10,7 @@ mod settings;
 use app_state::AppState;
 use conn::{connect, disconnect, get_app_snapshot, reconnect, select_channel};
 use persistence::{delete_bookmark, save_bookmark};
-use settings::{open_settings, set_ptt_key};
+use settings::{list_audio_devices, open_settings, set_audio_devices, set_ptt_key, set_vad_threshold, set_voice_mode};
 use tauri::Manager;
 
 /// 极简 stderr 日志：设置 MICASPEAK_LOG=debug/trace 时启用，
@@ -75,6 +75,10 @@ fn main() {
             audio::set_transmit_enabled,
             set_ptt_key,
             open_settings,
+            set_voice_mode,
+            set_vad_threshold,
+            list_audio_devices,
+            set_audio_devices,
             save_bookmark,
             delete_bookmark
         ])

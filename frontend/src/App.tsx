@@ -47,9 +47,10 @@ function vkName(vk: number): string {
   return `VK 0x${vk.toString(16).toUpperCase()}`
 }
 
-function SettingsPage({ snapshot, started }: { snapshot: AppSnapshot; started: boolean }) {
+function SettingsPage({ snapshot, started, levels }: { snapshot: AppSnapshot; started: boolean; levels: LevelPayload }) {
   const [capturing, setCapturing] = useState(false)
   const [notice, setNotice] = useState('')
+  const [devices, setDevices] = useState<{ inputs: string[]; outputs: string[] }>({ inputs: [], outputs: [] })
   const noticeTimer = useRef<number | undefined>(undefined)
   const showNotice = (message: string) => {
     setNotice(message)
@@ -80,14 +81,43 @@ function SettingsPage({ snapshot, started }: { snapshot: AppSnapshot; started: b
     return () => window.removeEventListener('keydown', onKey, true)
   }, [capturing])
 
+  // 设备列表（挂载时拉一次；错误时静默保留空列表 + 提示）。
+  useEffect(() => {
+    tauriInvoke<{ inputs: string[]; outputs: string[] }>('list_audio_devices')
+      .then(setDevices)
+      .catch(() => {})
+  }, [])
+
+  const setMode = (mode: 'ptt' | 'vad') => {
+    tauriInvoke('set_voice_mode', { mode, denoise: null })
+      .then(() => showNotice(mode === 'vad' ? '已切换到自动语音检测（VAD）' : '已切换到按住说话（PTT）'))
+      .catch((err) => showNotice(String(err).replace(/^Error:\s*/, '')))
+  }
+  const setDenoise = (denoise: boolean) => {
+    tauriInvoke('set_voice_mode', { mode: null, denoise })
+      .then(() => showNotice(denoise ? '软件降噪已开启' : '软件降噪已关闭'))
+      .catch((err) => showNotice(String(err).replace(/^Error:\s*/, '')))
+  }
+  const setThreshold = (value: number) => {
+    tauriInvoke('set_vad_threshold', { value })
+      .catch((err) => showNotice(String(err).replace(/^Error:\s*/, '')))
+  }
+  const setDevice = (input: string | null, output: string | null) => {
+    tauriInvoke('set_audio_devices', { input, output })
+      .then(() => showNotice('音频设备已切换'))
+      .catch((err) => showNotice(String(err).replace(/^Error:\s*/, '')))
+  }
+
   if (!started) {
     return (
       <main className="loading-page"><div className="loader" /><span>正在加载设置…</span></main>
     )
   }
+  const probPct = Math.min(100, Math.round((levels.prob || 0) * 100))
   return (
     <main className="settings-page">
       <header className="settings-header"><strong>设置</strong><span>语音与按键</span></header>
+
       <section className="settings-card">
         <div className="section-label">按住说话（PTT）</div>
         <div className="setting-row">
@@ -111,6 +141,88 @@ function SettingsPage({ snapshot, started }: { snapshot: AppSnapshot; started: b
         </div>
         <div className="setting-hint">本应用只读取 PTT 按键的按下与抬起，不记录任何按键内容。</div>
       </section>
+
+      <section className="settings-card">
+        <div className="section-label">语音模式</div>
+        <div className="setting-row">
+          <button
+            className={`mode-chip ${voice.mode === 'ptt' ? 'active' : ''}`}
+            type="button"
+            onClick={() => setMode('ptt')}
+          >按住说话（PTT）</button>
+          <button
+            className={`mode-chip ${voice.mode === 'vad' ? 'active' : ''}`}
+            type="button"
+            onClick={() => setMode('vad')}
+          >自动语音检测（VAD）</button>
+        </div>
+        <div className="setting-hint">
+          PTT：按住按键或界面按钮时发送。VAD：检测到语音自动发送，停止后约 0.25 秒补静音收尾。
+        </div>
+        {voice.mode === 'vad' && (
+          <>
+            <label className="setting-label slider-row">
+              <span>触发阈值</span>
+              <input
+                type="range"
+                min={0.1}
+                max={0.9}
+                step={0.05}
+                value={voice.vad_threshold}
+                onChange={(e) => setThreshold(Number(e.target.value))}
+              />
+              <span className="slider-value">{voice.vad_threshold.toFixed(2)}</span>
+            </label>
+            <div className="setting-row">
+              <span className="setting-label">实时语音概率</span>
+              <span className="level-meter prob-meter" aria-label="语音概率"><span className="level-fill" style={{ width: `${probPct}%` }} /></span>
+            </div>
+            <div className="setting-hint">概率高于阈值时自动发送。阈值越低越灵敏，也越容易误触发。</div>
+          </>
+        )}
+        <label className="setting-row check-row">
+          <input
+            type="checkbox"
+            checked={voice.denoise}
+            onChange={(e) => setDenoise(e.target.checked)}
+          />
+          <span>软件降噪（nnnoiseless）</span>
+        </label>
+        <div className="setting-hint">
+          降噪始终参与语音检测（VAD 概率来自降噪模型）；关闭降噪只影响发送的声音，不影响 VAD。
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <div className="section-label">音频设备</div>
+        <label className="setting-label select-row">
+          <span>输入设备</span>
+          <select
+            value={voice.input_device ?? ''}
+            onChange={(e) => setDevice(e.target.value || null, voice.output_device)}
+          >
+            <option value="">系统默认</option>
+            {devices.inputs.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </label>
+        <label className="setting-label select-row">
+          <span>输出设备</span>
+          <select
+            value={voice.output_device ?? ''}
+            onChange={(e) => setDevice(voice.input_device, e.target.value || null)}
+          >
+            <option value="">系统默认</option>
+            {devices.outputs.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </label>
+        <div className="setting-hint">切换只重建音频流，不会断开服务器连接。</div>
+      </section>
+
+      <section className="settings-card">
+        <div className="section-label">系统降噪</div>
+        <div className="setting-hint">不可用（本版本未启用系统级降噪探测，软件降噪不受影响）。</div>
+      </section>
+
       {notice && <div className="notice">{notice}</div>}
     </main>
   )
@@ -244,6 +356,10 @@ function ConnectForm({ snapshot, onConnect, onConnectBookmark, onSave, onDelete 
       <div className="status-line">
         <span className={`status-dot ${snapshot.connection.status}`} />
         <span>{connecting ? '连接中…' : snapshot.connection.status === 'disconnected' && snapshot.connection.reason ? '已断开' : '未连接'}</span>
+        <button
+          className="settings-link"
+          onClick={() => void tauriInvoke('open_settings').catch((err) => { setError(String(err).replace(/^Error:\s*/, '')) })}
+        >⚙ 设置</button>
       </div>
     </section>
   )
@@ -272,7 +388,7 @@ export default function App() {
   const [pwdBusy, setPwdBusy] = useState(false)
   // M2c：说话人状态与电平（只有 id/名字/电平标量，不放原始音频数据）
   const [talking, setTalking] = useState<Map<number, string>>(new Map())
-  const [levels, setLevels] = useState<LevelPayload>({ mic: 0, out: 0 })
+  const [levels, setLevels] = useState<LevelPayload>({ mic: 0, out: 0, prob: 0 })
   const promptRef = useRef(pwdPrompt)
   promptRef.current = pwdPrompt
   // M3 A4：设置窗口复用同一 React 应用与后端状态，按窗口标签路由。
@@ -367,10 +483,11 @@ export default function App() {
   }
 
   if (runtimeMissing || (started && !snapshot.runtime_available)) return <RuntimeMissing />
-  if (isSettingsWindow) return <SettingsPage snapshot={snapshot} started={started} />
+  if (isSettingsWindow) return <SettingsPage snapshot={snapshot} started={started} levels={levels} />
   if (!started) return <main className="loading-page"><div className="loader" /><span>正在启动 MicaSpeak…</span></main>
   const noticeEl = notice ? <div className="notice">{notice}</div> : null
   if (!connected) return <>{noticeEl}<ConnectForm snapshot={snapshot} onConnect={connect} onConnectBookmark={(b) => void connectBookmark(b)} onSave={save} onDelete={(id) => void removeBookmark(id)} /></>
+
   return (
     <main className="app-shell">
       <header className="topbar"><div className={`status-dot ${snapshot.connection.status}`} /><div className="server-title"><strong>{snapshot.connection.server_name || 'TS3 服务器'}</strong><span>{snapshot.connection.server_address}</span></div><span className="status-text">{statusText(snapshot)}</span><button className="icon-button" onClick={() => void tauriInvoke('open_settings').catch((err) => { setNotice(String(err).replace(/^Error:\s*/, '')); setTimeout(() => setNotice(''), 3000) })} aria-label="打开设置">⚙</button><button className="icon-button" onClick={() => void disconnect()} aria-label="断开连接">×</button></header>
