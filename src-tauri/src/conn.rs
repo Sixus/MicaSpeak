@@ -63,6 +63,7 @@ pub struct AppSnapshot {
     pub bookmarks: Vec<Bookmark>,
     pub last_channel: Option<String>,
     pub runtime_available: bool,
+    pub talking: Vec<crate::app_state::TalkerState>,
 }
 
 pub enum ConnCommand {
@@ -162,6 +163,7 @@ pub async fn connect(
         }
     }
     debug!(?bookmark_id, ?auto_join, "connect: bookmark resolved");
+    state.set_self_nickname(nickname.clone());
     *state.active.lock().await = Some(ActiveConnection {
         address: address.clone(),
         nickname: nickname.clone(),
@@ -245,6 +247,8 @@ async fn disconnect_inner(state: &AppState) {
         let _ = owner.tx.send(ConnCommand::Shutdown).await;
     }
     state.audio.stop();
+    state.talking_clear();
+    state.set_own_client(0);
     *state.channels.lock().await = Vec::new();
     *state.connection.lock().await = ConnectionPayload::default();
 }
@@ -257,6 +261,8 @@ async fn cleanup_if_current(state: &AppState, id: u64) {
         *state.conn_tx.lock().await = None;
         *state.channels.lock().await = Vec::new();
         state.audio.stop();
+        state.talking_clear();
+        state.set_own_client(0);
     }
 }
 
@@ -414,7 +420,21 @@ async fn driver_loop(
                     AudioData::S2CWhisper { from, .. } => *from,
                     _ => continue,
                 };
-                state.audio.play_packet(from, packet);
+                // C1 说话起点：库未暴露 talker 事件流，取 AudioHandler::handle_packet
+                // 的返回值（新队列=开始说话）；结束由播放回调 TalkerStopped + 电平任务
+                // 兜底清扫推导（任务卡允许的方案，来源已在卡 C1 注明）。
+                if let Some(new) = state.audio.play_packet(from, packet) {
+                    let new_id = u64::from(new.0);
+                    let name = state
+                        .client_name(new_id)
+                        .await
+                        .unwrap_or_else(|| format!("用户 {new_id}"));
+                    if state.talking_start(new_id, name.clone(), false) {
+                        state.emit_talking(&app, new_id, name, true).await;
+                    }
+                } else {
+                    state.talking_touch(u64::from(from));
+                }
             }
             Ok(SyncStreamItem::DisconnectedTemporarily(reason)) => {
                 publish_temporary_disconnect(&app, &state, reason, address.clone()).await;
@@ -443,6 +463,7 @@ async fn publish_state(
     };
     let server_name = book.server.name.clone();
     let own_client = book.own_client;
+    state.set_own_client(u64::from(own_client.0));
     let channels = book
         .channels
         .values()

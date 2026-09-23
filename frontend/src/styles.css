@@ -61,3 +61,13 @@ button:disabled { cursor: default; opacity: .55; }
 .ptt-chip.hold:disabled { cursor: default; opacity: .55; }
 .ptt-chip.hold.active { color: #fff; background: #0078d4; border-color: #0078d4; }
 @media (prefers-color-scheme: dark) { .ptt-chip.hold { color: rgba(255,255,255,.85); } }
+
+/* M2c 说话状态与电平显示 */
+.client-row .speaking-dot { margin-left: auto; margin-right: 8px; width: 8px; height: 8px; border-radius: 50%; background: #2fa14b; box-shadow: 0 0 6px #2fa14b; }
+.client-row.talking { color: #1d7a34; }
+.client-row.talking .avatar { background: #2fa14b; }
+.level-meter { width: 64px; height: 6px; border-radius: 3px; background: rgba(0,0,0,.1); overflow: hidden; flex: none; }
+.level-fill { display: block; height: 100%; border-radius: 3px; background: #0078d4; transition: width .1s linear; }
+.talkers { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1d7a34; }
+.talkers:empty::before { content: '无人说话'; color: #70757d; }
+@media (prefers-color-scheme: dark) { .level-meter { background: rgba(255,255,255,.12); } .client-row.talking { color: #5ecf7c; } .talkers:empty::before { color: rgba(255,255,255,.62); } }

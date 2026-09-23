@@ -16,3 +16,21 @@ export async function subscribeRuntimeMissing(onMissing: () => void): Promise<Un
 export async function subscribeUserError(onError: (message: string) => void): Promise<UnlistenFn> {
   return listen<{ message: string }>('error://user', (event) => onError(event.payload.message))
 }
+
+export type TalkingPayload = {
+  client_id: number
+  name: string
+  talking: boolean
+  is_self: boolean
+  timestamp: number
+}
+
+export async function subscribeTalking(onTalking: (payload: TalkingPayload) => void): Promise<UnlistenFn> {
+  return listen<TalkingPayload>('voice://talking', (event) => onTalking(event.payload))
+}
+
+export type LevelPayload = { mic: number; out: number }
+
+export async function subscribeLevel(onLevel: (payload: LevelPayload) => void): Promise<UnlistenFn> {
+  return listen<LevelPayload>('voice://level', (event) => onLevel(event.payload))
+}

@@ -24,6 +24,13 @@ export type Bookmark = {
   last_channel: string | null
 }
 
+export type TalkerState = {
+  client_id: number
+  name: string
+  is_self: boolean
+  last_active_ms: number
+}
+
 export type AppSnapshot = {
   connection: {
     status: ConnectionStatus
@@ -35,6 +42,7 @@ export type AppSnapshot = {
   bookmarks: Bookmark[]
   last_channel: string | null
   runtime_available: boolean
+  talking: TalkerState[]
 }
 
 export const emptySnapshot: AppSnapshot = {
@@ -43,4 +51,5 @@ export const emptySnapshot: AppSnapshot = {
   bookmarks: [],
   last_channel: null,
   runtime_available: true,
+  talking: [],
 }

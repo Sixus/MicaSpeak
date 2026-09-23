@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { subscribeRuntimeMissing, subscribeSnapshot, subscribeUserError, tauriInvoke } from './api'
+import {
+  subscribeLevel,
+  subscribeRuntimeMissing,
+  subscribeSnapshot,
+  subscribeTalking,
+  subscribeUserError,
+  tauriInvoke,
+  type LevelPayload,
+  type TalkingPayload,
+} from './api'
 import { emptySnapshot, type AppSnapshot, type Bookmark, type ChannelNode } from './types'
 
 const fallbackSnapshot: AppSnapshot = {
@@ -28,7 +37,11 @@ function RuntimeMissing() {
   )
 }
 
-function ChannelTree({ channels, onSelect }: { channels: ChannelNode[]; onSelect: (channel: ChannelNode) => void }) {
+function ChannelTree({ channels, talkingIds, onSelect }: {
+  channels: ChannelNode[]
+  talkingIds: Set<number>
+  onSelect: (channel: ChannelNode) => void
+}) {
   const roots = channels.filter((channel) => channel.parent_id === null).sort((a, b) => a.order - b.order)
   const childrenOf = (parentId: number) => channels.filter((channel) => channel.parent_id === parentId).sort((a, b) => a.order - b.order)
 
@@ -40,9 +53,10 @@ function ChannelTree({ channels, onSelect }: { channels: ChannelNode[]; onSelect
         {channel.password && <span className="lock" aria-label="密码频道">⌑</span>}
       </button>
       {channel.clients.map((client) => (
-        <div className={`client-row ${client.is_self ? 'self' : ''}`} key={`client-${client.id}`} style={{ paddingLeft: 26 + depth * 16 }}>
+        <div className={`client-row ${client.is_self ? 'self' : ''} ${talkingIds.has(client.id) ? 'talking' : ''}`} key={`client-${client.id}`} style={{ paddingLeft: 26 + depth * 16 }}>
           <span className="avatar">{client.name.slice(0, 1)}</span>
           <span>{client.name}{client.is_self ? '（我）' : ''}</span>
+          {talkingIds.has(client.id) && <span className="speaking-dot" aria-label="正在说话" />}
         </div>
       ))}
       {childrenOf(channel.id).map((child) => render(child, depth + 1))}
@@ -157,6 +171,9 @@ export default function App() {
   const [pwdPrompt, setPwdPrompt] = useState<{ id: number; name: string } | null>(null)
   const [pwdError, setPwdError] = useState('')
   const [pwdBusy, setPwdBusy] = useState(false)
+  // M2c：说话人状态与电平（只有 id/名字/电平标量，不放原始音频数据）
+  const [talking, setTalking] = useState<Map<number, string>>(new Map())
+  const [levels, setLevels] = useState<LevelPayload>({ mic: 0, out: 0 })
   const promptRef = useRef(pwdPrompt)
   promptRef.current = pwdPrompt
 
@@ -166,14 +183,33 @@ export default function App() {
     const start = async () => {
       try {
         offs.push(await subscribeRuntimeMissing(() => setRuntimeMissing(true)))
-        offs.push(await subscribeSnapshot((next) => active && setSnapshot(next)))
+        offs.push(await subscribeSnapshot((next) => {
+          if (!active) return
+          setSnapshot(next)
+          // 快照是权威状态：用快照里的说话列表整体校正（覆盖漏收的事件）
+          setTalking(new Map(next.talking.map((t) => [t.client_id, t.name])))
+        }))
         offs.push(await subscribeUserError((message) => {
           if (!active) return
           if (promptRef.current) setPwdError(message)
           else { setNotice(message); setTimeout(() => setNotice(''), 4000) }
         }))
+        offs.push(await subscribeTalking((p) => {
+          if (!active) return
+          setTalking((prev) => {
+            const next = new Map(prev)
+            if (p.talking) next.set(p.client_id, p.name)
+            else next.delete(p.client_id)
+            return next
+          })
+        }))
+        offs.push(await subscribeLevel((l) => { if (active) setLevels(l) }))
         const initial = await tauriInvoke<AppSnapshot>('get_app_snapshot')
-        if (active) { setSnapshot(initial); setStarted(true) }
+        if (active) {
+          setSnapshot(initial)
+          setTalking(new Map(initial.talking.map((t) => [t.client_id, t.name])))
+          setStarted(true)
+        }
       } catch {
         if (active) { setSnapshot(fallbackSnapshot); setStarted(true) }
       }
@@ -184,6 +220,7 @@ export default function App() {
 
   const connected = snapshot.connection.status === 'connected'
   const groupedChannels = useMemo(() => snapshot.channels, [snapshot.channels])
+  const talkingIds = useMemo(() => new Set(talking.keys()), [talking])
   const connect = async (address: string, nickname: string, password: string) => {
     await tauriInvoke('connect', { address, nickname, password: password || null, bookmarkId: null })
   }
@@ -233,7 +270,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar"><div className={`status-dot ${snapshot.connection.status}`} /><div className="server-title"><strong>{snapshot.connection.server_name || 'TS3 服务器'}</strong><span>{snapshot.connection.server_address}</span></div><span className="status-text">{statusText(snapshot)}</span><button className="icon-button" onClick={() => setSettingsOpen(true)} aria-label="打开设置">⚙</button><button className="icon-button" onClick={() => void disconnect()} aria-label="断开连接">×</button></header>
-      <div className="content-grid"><section className="panel channel-panel"><div className="panel-heading"><span>频道</span><span className="muted">{snapshot.channels.length}</span></div><ChannelTree channels={groupedChannels} onSelect={selectChannel} /></section><section className="panel chat-panel"><div className="tabs"><button className="tab active">当前频道</button><button className="tab">聊天</button></div><div className="chat-empty">频道聊天将在 M2 接入</div></section></div>
+      <div className="content-grid"><section className="panel channel-panel"><div className="panel-heading"><span>频道</span><span className="muted">{snapshot.channels.length}</span></div><ChannelTree channels={groupedChannels} talkingIds={talkingIds} onSelect={selectChannel} /></section><section className="panel chat-panel"><div className="tabs"><button className="tab active">当前频道</button><button className="tab">聊天</button></div><div className="chat-empty">频道聊天将在 M2 接入</div></section></div>
       <footer className="statusbar"><button
         className={`ptt-chip hold ${transmitting ? 'active' : ''}`}
         disabled={!connected}
@@ -242,7 +279,7 @@ export default function App() {
         onPointerUp={() => setTransmit(false)}
         onPointerCancel={() => setTransmit(false)}
         onLostPointerCapture={() => setTransmit(false)}
-      >{transmitting ? '说话中…' : '按住说话'}</button><span className="latency">连接稳定</span></footer>
+      >{transmitting ? '说话中…' : '按住说话'}</button><span className="level-meter" aria-label="麦克风电平"><span className="level-fill" style={{ width: `${Math.min(100, Math.round(levels.mic * 300))}%` }} /></span><span className="talkers">{talking.size ? [...talking.values()].join('、') : '无人说话'}</span></footer>
       {settingsOpen && <div className="settings-popover"><div className="panel-heading"><strong>设置</strong><button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="关闭设置">×</button></div><p>设置窗口占位入口，音频与悬浮窗将在后续任务接入。</p></div>}
       {pwdPrompt && (
         <ChannelPasswordModal

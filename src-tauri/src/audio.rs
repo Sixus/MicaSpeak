@@ -347,20 +347,44 @@ pub async fn event_relay_task(app: AppHandle, state: crate::app_state::AppState)
                     json!({ "message": format!("音频{direction}设备出错（{message}），正在回退到系统默认设备") }),
                 );
             }
-            AudioEvent::TalkerStopped(_) => {
-                // M2c：接入 TalkingState 后广播 voice://talking(false)
+            AudioEvent::TalkerStopped(id) => {
+                // C2：播放队列耗尽 → 该说话人停止。
+                let client_id = u64::from(id.0);
+                if let Some((name, _is_self)) = state.talking_stop(client_id) {
+                    state.emit_talking(&app, client_id, name, false).await;
+                }
             }
         }
     }
 }
 
 /// 电平推送任务：100ms 限频读原子量，发 voice://level（不含原始采样）。
+/// 同时维护自己的说话状态（C1：自己用发送原子开关推导）和超时兜底清扫。
 pub async fn level_task(app: AppHandle, state: crate::app_state::AppState) {
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
     loop {
         interval.tick().await;
         if state.audio.active_conn() == 0 {
             continue;
+        }
+        // 自己：transmit 开 ↔ TalkingState。
+        let own = state.own_client();
+        if own != 0 {
+            if state.audio.transmit.load(Ordering::Relaxed) {
+                if state.talking_start(own, state.self_nickname(), true) {
+                    let name = state.self_nickname();
+                    state.emit_talking(&app, own, name, true).await;
+                } else {
+                    state.talking_touch(own);
+                }
+            } else if let Some((name, _)) = state.talking_stop(own) {
+                state.emit_talking(&app, own, name, false).await;
+            }
+        }
+        // 兜底：>1.2s 无包视为停止（覆盖丢失的 TalkerStopped；松开后官方端
+        // 停止显示的验收上限约 1s，由静音尾包+队列耗尽正常路径完成）。
+        for (client_id, name, _) in state.talking_sweep(std::time::Duration::from_millis(1200)) {
+            state.emit_talking(&app, client_id, name, false).await;
         }
         let mic = f32::from_bits(state.audio.mic_level.load(Ordering::Relaxed));
         let out = f32::from_bits(state.audio.out_level.load(Ordering::Relaxed));
