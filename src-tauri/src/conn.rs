@@ -1,4 +1,5 @@
 use crate::app_state::{ActiveConnection, AppState, ConnOwner};
+use crate::audio::{send_task, SEND_QUEUE};
 use crate::persistence::load_identity;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -242,6 +243,7 @@ async fn disconnect_inner(state: &AppState) {
     if let Some(owner) = state.conn_tx.lock().await.take() {
         let _ = owner.tx.send(ConnCommand::Shutdown).await;
     }
+    state.audio.stop();
     *state.channels.lock().await = Vec::new();
     *state.connection.lock().await = ConnectionPayload::default();
 }
@@ -253,6 +255,7 @@ async fn cleanup_if_current(state: &AppState, id: u64) {
     if is_current(state, id).await {
         *state.conn_tx.lock().await = None;
         *state.channels.lock().await = Vec::new();
+        state.audio.stop();
     }
 }
 
@@ -292,8 +295,15 @@ async fn connection_loop(
             return;
         }
     };
-    let mut sync: SyncConnection = connection.into();
+    let sync: SyncConnection = connection.into();
     let mut handle = sync.get_handle();
+
+    // 音频发送任务：独立 handle + 独立任务，等待编码包并转发（音频流在
+    // publish_state 确认 connected 后才创建，见 AudioManager.ensure_started）。
+    let audio_handle = sync.get_handle();
+    let (audio_tx, audio_rx) = mpsc::channel(SEND_QUEUE);
+    tauri::async_runtime::spawn(send_task(audio_handle, audio_rx));
+    state.audio.register_connection(id, audio_tx);
 
     // 事件驱动任务：独占轮询事件流，负责发布状态与错误。
     let driver_app = app.clone();
@@ -361,7 +371,7 @@ async fn driver_loop(
         }
         match item {
             Ok(SyncStreamItem::BookEvents(_)) => {
-                publish_state(&app, &state, &mut sync, &address).await;
+                publish_state(&app, &state, &mut sync, &address, id).await;
                 // 首次 BookEvents 时频道列表可能尚未就绪：找不到目标就保留
                 // auto_join 等下一次事件重试，找到（含密码频道）才消费掉。
                 if let Some(name) = &auto_join {
@@ -415,6 +425,7 @@ async fn publish_state(
     state: &AppState,
     sync: &mut SyncConnection,
     address: &str,
+    id: u64,
 ) {
     // 驱动任务独占轮询，可直接解引用读取连接数据（不经过 handle，避免死锁）
     let Some(book) = sync.get_state().ok() else {
@@ -453,6 +464,8 @@ async fn publish_state(
                 .collect(),
         })
         .collect::<Vec<_>>();
+    // 真正 connected：此刻起允许音频发送流存在（A1 生命周期起点）。
+    state.audio.ensure_started(id);
     *state.connection.lock().await = ConnectionPayload {
         status: "connected".into(),
         reason: None,

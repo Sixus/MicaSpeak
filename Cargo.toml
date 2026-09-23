@@ -2,6 +2,11 @@
 members = ["src-tauri"]
 resolver = "2"
 
+# tsclientlib（git 源）与本地 vendor 的 tsproto-packets 必须是同一份 crate，
+# 否则 OutPacket 类型出现两份导致 send_audio 类型不匹配。
+[patch."https://github.com/ReSpeak/tsclientlib"]
+tsproto-packets = { path = "src-tauri/vendor/tsproto-packets" }
+
 [profile.release]
 strip = true
 lto = true

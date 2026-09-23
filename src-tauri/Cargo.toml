@@ -17,7 +17,14 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 tokio = { version = "1", features = ["sync", "time", "rt-multi-thread"] }
 futures = "0.3"
-tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib", features = ["default-tls", "unstable"], default-features = false }
+tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib", features = ["audio", "default-tls", "unstable"], default-features = false }
+# 音频发送需要直接构造 OutAudio 包；tsproto-packets 是 tsclientlib 仓库的子目录，
+# cargo 无法对 git 仓库子目录建依赖，故 vendor 同 rev 源码（见 vendor/tsproto-packets），
+# 并在 workspace 根 Cargo.toml 用 [patch] 统一为同一份，避免类型不一致。
+tsproto-packets = { path = "vendor/tsproto-packets" }
+# 采集编码用；与 tsclientlib audio feature 锁定同一版本
+audiopus = "0.3.0-rc.0"
+cpal = "0.18"
 
 [features]
 default = ["custom-protocol"]

@@ -1,5 +1,6 @@
 use crate::conn::{AppSnapshot, ConnectionPayload};
 use crate::persistence::{load_config, AppConfig};
+use crate::audio::AudioManager;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -28,6 +29,8 @@ pub struct AppState {
     pub conn_tx: Arc<Mutex<Option<ConnOwner>>>,
     pub active: Arc<Mutex<Option<ActiveConnection>>>,
     pub next_conn_id: Arc<AtomicU64>,
+    /// M2 音频生命周期：采集/编码/发送开关。
+    pub audio: AudioManager,
     // WebView2 安装状态进程内不变；只在外层 main 窗口创建前检测一次，
     // 避免在异步命令里反复同步 spawn reg（曾观察到偶发挂死）。
     runtime_available: bool,
@@ -45,6 +48,7 @@ impl AppState {
             conn_tx: Arc::new(Mutex::new(None)),
             active: Arc::new(Mutex::new(None)),
             next_conn_id: Arc::new(AtomicU64::new(0)),
+            audio: AudioManager::new(),
             runtime_available: crate::conn::webview2_available(),
             pending_error: Arc::new(Mutex::new(notice)),
         }

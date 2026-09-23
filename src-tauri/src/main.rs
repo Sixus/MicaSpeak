@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app_state;
+mod audio;
 mod conn;
 mod persistence;
 
+use audio::set_transmit_enabled;
 use app_state::AppState;
 use conn::{connect, disconnect, get_app_snapshot, reconnect, select_channel};
 use persistence::{delete_bookmark, save_bookmark};
@@ -68,6 +70,7 @@ fn main() {
             disconnect,
             reconnect,
             select_channel,
+            set_transmit_enabled,
             save_bookmark,
             delete_bookmark
         ])

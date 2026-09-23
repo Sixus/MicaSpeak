@@ -202,6 +202,15 @@ export default function App() {
     } catch (err) { setNotice(String(err).replace(/^Error:\s*/, '')) }
   }
   const disconnect = async () => { await tauriInvoke('disconnect') }
+  // M2a：按住说话。pointer capture 保证按住后拖出按钮也能在松开时结束发送。
+  const [transmitting, setTransmitting] = useState(false)
+  const transmitRef = useRef(false)
+  const setTransmit = (enabled: boolean) => {
+    if (transmitRef.current === enabled) return
+    transmitRef.current = enabled
+    setTransmitting(enabled)
+    void tauriInvoke('set_transmit_enabled', { enabled }).catch(() => { transmitRef.current = !enabled; setTransmitting(!enabled) })
+  }
   const selectChannel = async (channel: ChannelNode) => {
     if (channel.password) { setPwdError(''); setPwdPrompt({ id: channel.id, name: channel.name }); return }
     try { await tauriInvoke('select_channel', { channelId: channel.id, password: null }) }
@@ -225,7 +234,15 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar"><div className={`status-dot ${snapshot.connection.status}`} /><div className="server-title"><strong>{snapshot.connection.server_name || 'TS3 服务器'}</strong><span>{snapshot.connection.server_address}</span></div><span className="status-text">{statusText(snapshot)}</span><button className="icon-button" onClick={() => setSettingsOpen(true)} aria-label="打开设置">⚙</button><button className="icon-button" onClick={() => void disconnect()} aria-label="断开连接">×</button></header>
       <div className="content-grid"><section className="panel channel-panel"><div className="panel-heading"><span>频道</span><span className="muted">{snapshot.channels.length}</span></div><ChannelTree channels={groupedChannels} onSelect={selectChannel} /></section><section className="panel chat-panel"><div className="tabs"><button className="tab active">当前频道</button><button className="tab">聊天</button></div><div className="chat-empty">频道聊天将在 M2 接入</div></section></div>
-      <footer className="statusbar"><span className="ptt-chip">麦克风待命</span><span className="latency">连接稳定</span></footer>
+      <footer className="statusbar"><button
+        className={`ptt-chip hold ${transmitting ? 'active' : ''}`}
+        disabled={!connected}
+        aria-label="按住说话"
+        onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); setTransmit(true) }}
+        onPointerUp={() => setTransmit(false)}
+        onPointerCancel={() => setTransmit(false)}
+        onLostPointerCapture={() => setTransmit(false)}
+      >{transmitting ? '说话中…' : '按住说话'}</button><span className="latency">连接稳定</span></footer>
       {settingsOpen && <div className="settings-popover"><div className="panel-heading"><strong>设置</strong><button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="关闭设置">×</button></div><p>设置窗口占位入口，音频与悬浮窗将在后续任务接入。</p></div>}
       {pwdPrompt && (
         <ChannelPasswordModal

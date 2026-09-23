@@ -1,0 +1,5 @@
+# audiopus_sys 需要 cmake 构建 libopus；本机无全局 cmake，
+# 指向便携版（M0 已验收的环境），cmake 4.x 必须放宽最低版本策略。
+[env]
+CMAKE = "D:\\tools\\cmake-4.1.1-windows-x86_64\\bin\\cmake.exe"
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
