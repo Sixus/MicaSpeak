@@ -238,6 +238,10 @@ fn open_capture(
     let encoder = Encoder::new(SampleRate::Hz48000, Channels::Mono, Application::Voip)
         .map_err(|e| format!("创建 Opus 编码器失败：{e}"))?;
     let mut opus_output = [0u8; MAX_OPUS_FRAME_SIZE];
+    // 采集回调周期由驱动决定（本机 480 采样/10ms），线上帧长固定 20ms，
+    // 因此按 USUAL_FRAME_SIZE 重新分帧后再编码。
+    let mut frame_buf = [0f32; USUAL_FRAME_SIZE];
+    let mut frame_fill = 0usize;
 
     let stream = device
         .build_input_stream(
@@ -247,22 +251,32 @@ fn open_capture(
                 let rms = rms_of(data);
                 mic_level.store(rms.to_bits(), Ordering::Relaxed);
                 if !transmit.load(Ordering::Relaxed) {
+                    // 未发送时丢弃残留采样，避免松开后瞬间补播旧音频。
+                    frame_fill = 0;
                     return;
                 }
-                match encoder.encode_float(data, &mut opus_output) {
-                    Ok(len) => {
-                        let packet = OutAudio::new(&AudioData::C2S {
-                            id: 0,
-                            codec: CodecType::OpusVoice,
-                            data: &opus_output[..len],
-                        });
-                        if let Err(e) = send_tx.try_send(packet) {
-                            if matches!(e, tokio::sync::mpsc::error::TrySendError::Full(_)) {
-                                debug!("发送队列满，丢弃音频帧");
+                for &s in data {
+                    frame_buf[frame_fill] = s;
+                    frame_fill += 1;
+                    if frame_fill < USUAL_FRAME_SIZE {
+                        continue;
+                    }
+                    frame_fill = 0;
+                    match encoder.encode_float(&frame_buf, &mut opus_output) {
+                        Ok(len) => {
+                            let packet = OutAudio::new(&AudioData::C2S {
+                                id: 0,
+                                codec: CodecType::OpusVoice,
+                                data: &opus_output[..len],
+                            });
+                            if let Err(e) = send_tx.try_send(packet) {
+                                if matches!(e, tokio::sync::mpsc::error::TrySendError::Full(_)) {
+                                    debug!("发送队列满，丢弃音频帧");
+                                }
                             }
                         }
+                        Err(e) => error!("Opus 编码失败：{e}"),
                     }
-                    Err(e) => error!("Opus 编码失败：{e}"),
                 }
             },
             move |e| {
