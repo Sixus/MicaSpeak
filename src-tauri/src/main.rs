@@ -77,9 +77,17 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             let state = app.state::<AppState>().inner().clone();
+            // M2 音频事件任务：转发/限频推送/健康重建（任务必须被 Tokio 实际轮询，
+            // 见 M0 教训）。全部消费 AppState 原子量与通道，不碰音频回调。
+            let (relay_handle, relay_state) = (handle.clone(), state.clone());
+            tauri::async_runtime::spawn(audio::event_relay_task(relay_handle, relay_state));
+            let (level_handle, level_state) = (handle.clone(), state.clone());
+            tauri::async_runtime::spawn(audio::level_task(level_handle, level_state));
+            let (init_handle, init_state) = (handle.clone(), state.clone());
             tauri::async_runtime::spawn(async move {
-                state.emit_initial(&handle).await;
+                init_state.emit_initial(&init_handle).await;
             });
+            tauri::async_runtime::spawn(audio::health_task(state));
             Ok(())
         })
         .run(tauri::generate_context!())

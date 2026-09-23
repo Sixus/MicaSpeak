@@ -11,6 +11,7 @@ use tsclientlib::sync::{SyncConnection, SyncConnectionHandle, SyncStreamItem};
 use tsclientlib::{
     Connection, DisconnectOptions, Error as TslError, Identity, TemporaryDisconnectReason, TsError,
 };
+use tsproto_packets::packets::AudioData;
 use tracing::debug;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -405,6 +406,15 @@ async fn driver_loop(
                         None => {}
                     }
                 }
+            }
+            Ok(SyncStreamItem::Audio(packet)) => {
+                // B1：收到的音频包喂给播放队列（分说话人/重排/PLC/混音在库内完成）。
+                let from = match packet.data().data() {
+                    AudioData::S2C { from, .. } => *from,
+                    AudioData::S2CWhisper { from, .. } => *from,
+                    _ => continue,
+                };
+                state.audio.play_packet(from, packet);
             }
             Ok(SyncStreamItem::DisconnectedTemporarily(reason)) => {
                 publish_temporary_disconnect(&app, &state, reason, address.clone()).await;
