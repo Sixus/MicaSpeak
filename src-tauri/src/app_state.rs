@@ -92,6 +92,10 @@ impl AppState {
             let config = self.config.lock().await;
             (config.public_bookmarks(), config.last_channel.clone())
         };
+        let voice = {
+            let config = self.config.lock().await;
+            config.voice.view(crate::hotkey::installed())
+        };
         let talking = self.talking_list();
         AppSnapshot {
             connection,
@@ -100,6 +104,7 @@ impl AppState {
             last_channel,
             runtime_available: self.runtime_available,
             talking,
+            voice,
         }
     }
 

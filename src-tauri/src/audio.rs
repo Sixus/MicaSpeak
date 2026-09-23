@@ -68,7 +68,12 @@ pub enum AudioEvent {
 
 /// 音频生命周期管理：连接期间至多一条发送流 + 一条播放流。
 pub struct AudioManager {
-    /// 发送开关（按住说话）。音频回调只读。
+    /// 界面按钮按住来源（A3 双来源之一）。
+    pub button_ptt: Arc<AtomicBool>,
+    /// 全局热键按住来源（钩子监视任务写，A3 双来源之二）。
+    pub key_ptt: Arc<AtomicBool>,
+    /// 最终发送开关 = button_ptt || key_ptt（VAD 在阶段 B 接入）。
+    /// 音频回调只读。
     pub transmit: Arc<AtomicBool>,
     /// 麦克风电平（f32 bits 存 RMS，0..1）。回调写，事件任务读（限频推送）。
     pub mic_level: Arc<AtomicU32>,
@@ -89,6 +94,8 @@ pub struct AudioManager {
 impl Clone for AudioManager {
     fn clone(&self) -> Self {
         Self {
+            button_ptt: self.button_ptt.clone(),
+            key_ptt: self.key_ptt.clone(),
             transmit: self.transmit.clone(),
             mic_level: self.mic_level.clone(),
             out_level: self.out_level.clone(),
@@ -105,6 +112,8 @@ impl AudioManager {
     pub fn new() -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         Self {
+            button_ptt: Arc::new(AtomicBool::new(false)),
+            key_ptt: Arc::new(AtomicBool::new(false)),
             transmit: Arc::new(AtomicBool::new(false)),
             mic_level: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             out_level: Arc::new(AtomicU32::new(0.0f32.to_bits())),
@@ -173,6 +182,8 @@ impl AudioManager {
         self.active_conn.store(0, Ordering::Relaxed);
         self.streams.lock().unwrap().take();
         *self.send_tx.lock().unwrap() = None;
+        self.button_ptt.store(false, Ordering::Relaxed);
+        self.key_ptt.store(false, Ordering::Relaxed);
         self.transmit.store(false, Ordering::Relaxed);
         self.mic_level.store(0.0f32.to_bits(), Ordering::Relaxed);
         self.out_level.store(0.0f32.to_bits(), Ordering::Relaxed);
@@ -191,10 +202,13 @@ impl AudioManager {
         }
     }
 
-    /// 发送开关。关闭时补 2 个空 Opus 包，让服务器/其他客户端尽快结束“说话中”。
-    pub fn set_transmit(&self, enabled: bool) {
+    /// 发送开关（A3 双来源语义）：界面按钮与全局热键任一按住即发送，
+    /// 两个都松开才停（同时按住、先松一个 → 继续发送）。
+    /// 关闭瞬间补 2 个空 Opus 包，让服务器/其他客户端尽快结束“说话中”。
+    fn recompute_transmit(&self) {
+        let enabled = self.button_ptt.load(Ordering::Relaxed) || self.key_ptt.load(Ordering::Relaxed);
         let prev = self.transmit.swap(enabled, Ordering::Relaxed);
-        if prev != enabled && !enabled {
+        if prev && !enabled {
             if let Some(tx) = self.send_tx.lock().unwrap().clone() {
                 for _ in 0..2 {
                     let packet =
@@ -203,6 +217,16 @@ impl AudioManager {
                 }
             }
         }
+    }
+
+    pub fn set_button_ptt(&self, enabled: bool) {
+        self.button_ptt.store(enabled, Ordering::Relaxed);
+        self.recompute_transmit();
+    }
+
+    pub fn set_key_ptt(&self, enabled: bool) {
+        self.key_ptt.store(enabled, Ordering::Relaxed);
+        self.recompute_transmit();
     }
 }
 
@@ -420,6 +444,7 @@ pub async fn health_task(state: crate::app_state::AppState) {
 
 #[tauri::command]
 pub async fn set_transmit_enabled(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
-    state.audio.set_transmit(enabled);
+    // M3 A3：界面按钮是双来源之一；全局热键由 hotkey::watch_task 写入另一来源。
+    state.audio.set_button_ptt(enabled);
     Ok(())
 }

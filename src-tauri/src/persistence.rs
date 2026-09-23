@@ -14,19 +14,84 @@ pub struct BookmarkConfig {
     pub last_channel: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
     pub bookmarks: Vec<BookmarkConfig>,
     #[serde(default)]
     pub last_channel: Option<String>,
+    /// M3 语音设置；旧配置文件缺省时整体取默认（PTT + 左 Ctrl）。
+    #[serde(default)]
+    pub voice: VoiceConfig,
 }
 
-impl Default for AppConfig {
+fn default_voice_mode() -> String {
+    "ptt".into()
+}
+
+fn default_ptt_key_vk() -> u32 {
+    // docs/01 F5：默认左 Ctrl（低级键盘钩子路径支持纯修饰键）。
+    0xA2
+}
+
+fn default_vad_threshold() -> f32 {
+    0.5
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoiceConfig {
+    /// "ptt" | "vad"
+    #[serde(default = "default_voice_mode")]
+    pub mode: String,
+    /// Windows 虚拟键码（docs/01 F5 默认左 Ctrl = 0xA2）。
+    #[serde(default = "default_ptt_key_vk")]
+    pub ptt_key_vk: u32,
+    #[serde(default = "default_vad_threshold")]
+    pub vad_threshold: f32,
+    #[serde(default)]
+    pub denoise: bool,
+    /// None = 系统默认设备。
+    #[serde(default)]
+    pub input_device: Option<String>,
+    #[serde(default)]
+    pub output_device: Option<String>,
+}
+
+impl Default for VoiceConfig {
     fn default() -> Self {
         Self {
-            bookmarks: Vec::new(),
-            last_channel: None,
+            mode: default_voice_mode(),
+            ptt_key_vk: default_ptt_key_vk(),
+            vad_threshold: default_vad_threshold(),
+            denoise: false,
+            input_device: None,
+            output_device: None,
+        }
+    }
+}
+
+/// 快照里的语音设置视图（含钩子运行状态，设置页直接渲染）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoiceSettingsView {
+    pub mode: String,
+    pub ptt_key_vk: u32,
+    pub vad_threshold: f32,
+    pub denoise: bool,
+    pub input_device: Option<String>,
+    pub output_device: Option<String>,
+    pub hotkey_installed: bool,
+}
+
+impl VoiceConfig {
+    pub fn view(&self, hotkey_installed: bool) -> VoiceSettingsView {
+        VoiceSettingsView {
+            mode: self.mode.clone(),
+            ptt_key_vk: self.ptt_key_vk,
+            vad_threshold: self.vad_threshold,
+            denoise: self.denoise,
+            input_device: self.input_device.clone(),
+            output_device: self.output_device.clone(),
+            hotkey_installed,
         }
     }
 }

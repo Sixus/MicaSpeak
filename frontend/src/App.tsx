@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import {
   subscribeLevel,
   subscribeRuntimeMissing,
@@ -14,6 +15,105 @@ import { emptySnapshot, type AppSnapshot, type Bookmark, type ChannelNode } from
 const fallbackSnapshot: AppSnapshot = {
   ...emptySnapshot,
   connection: { ...emptySnapshot.connection, reason: '请在 Tauri 窗口中运行 MicaSpeak' },
+}
+
+// ---- M3 A4：PTT 按键捕获（Windows 虚拟键码） ----
+
+function jsEventToVk(e: KeyboardEvent): number | null {
+  const loc = e.location // 1=左 2=右 3=小键盘
+  if (e.keyCode === 16) return loc === 2 ? 0xa1 : 0xa0
+  if (e.keyCode === 17) return loc === 2 ? 0xa3 : 0xa2
+  if (e.keyCode === 18) return loc === 2 ? 0xa5 : 0xa4
+  return e.keyCode > 0 ? e.keyCode : null
+}
+
+const VK_NAMES: Record<number, string> = {
+  0x08: 'Backspace', 0x09: 'Tab', 0x0d: 'Enter', 0x13: 'Pause', 0x14: 'CapsLock', 0x1b: 'Esc',
+  0x20: '空格', 0x21: 'PageUp', 0x22: 'PageDown', 0x23: 'End', 0x24: 'Home',
+  0x25: '←', 0x26: '↑', 0x27: '→', 0x28: '↓', 0x2d: 'Insert', 0x2e: 'Delete',
+  0x5b: '左Win', 0x5c: '右Win', 0x60: '小键盘0', 0x61: '小键盘1', 0x62: '小键盘2', 0x63: '小键盘3',
+  0x64: '小键盘4', 0x65: '小键盘5', 0x66: '小键盘6', 0x67: '小键盘7', 0x68: '小键盘8', 0x69: '小键盘9',
+  0x6a: '小键盘*', 0x6b: '小键盘+', 0x6d: '小键盘-', 0x6e: '小键盘.', 0x6f: '小键盘/',
+  0xa0: '左Shift', 0xa1: '右Shift', 0xa2: '左Ctrl', 0xa3: '右Ctrl', 0xa4: '左Alt', 0xa5: '右Alt',
+  0xba: ';', 0xbb: '=', 0xbc: ',', 0xbd: '-', 0xbe: '.', 0xbf: '/', 0xc0: '`',
+  0xdb: '[', 0xdc: '\\', 0xdd: ']', 0xde: "'",
+}
+
+function vkName(vk: number): string {
+  if (VK_NAMES[vk]) return VK_NAMES[vk]
+  if (vk >= 0x70 && vk <= 0x87) return `F${vk - 0x6f}`
+  if (vk >= 0x41 && vk <= 0x5a) return String.fromCharCode(vk)
+  if (vk >= 0x30 && vk <= 0x39) return String(vk - 0x30)
+  return `VK 0x${vk.toString(16).toUpperCase()}`
+}
+
+function SettingsPage({ snapshot, started }: { snapshot: AppSnapshot; started: boolean }) {
+  const [capturing, setCapturing] = useState(false)
+  const [notice, setNotice] = useState('')
+  const noticeTimer = useRef<number | undefined>(undefined)
+  const showNotice = (message: string) => {
+    setNotice(message)
+    window.clearTimeout(noticeTimer.current)
+    noticeTimer.current = window.setTimeout(() => setNotice(''), 3500)
+  }
+  const voice = snapshot.voice
+
+  // 捕获模式：拦截下一个物理键（Esc 取消）。纯修饰键也允许（钩子路径的红利）。
+  useEffect(() => {
+    if (!capturing) return
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.key === 'Escape') {
+        setCapturing(false)
+        showNotice('已取消改绑')
+        return
+      }
+      const vk = jsEventToVk(e)
+      if (vk == null || vk === 0x1b) return
+      setCapturing(false)
+      tauriInvoke('set_ptt_key', { vk })
+        .then(() => showNotice(`PTT 按键已改绑为 ${vkName(vk)}，旧按键已失效`))
+        .catch((err) => showNotice(String(err).replace(/^Error:\s*/, '')))
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [capturing])
+
+  if (!started) {
+    return (
+      <main className="loading-page"><div className="loader" /><span>正在加载设置…</span></main>
+    )
+  }
+  return (
+    <main className="settings-page">
+      <header className="settings-header"><strong>设置</strong><span>语音与按键</span></header>
+      <section className="settings-card">
+        <div className="section-label">按住说话（PTT）</div>
+        <div className="setting-row">
+          <span className="setting-label">全局按键</span>
+          {capturing ? (
+            <button className="secondary-button capturing" type="button">请按下任意按键（Esc 取消）…</button>
+          ) : (
+            <button className="secondary-button" type="button" onClick={() => setCapturing(true)}>
+              {vkName(voice.ptt_key_vk)}　更改…
+            </button>
+          )}
+        </div>
+        <div className={`setting-hint ${voice.hotkey_installed ? '' : 'setting-hint-bad'}`}>
+          {voice.hotkey_installed
+            ? `全局热键已生效：任意窗口按住 ${vkName(voice.ptt_key_vk)} 即可发送（含其他程序聚焦时）。`
+            : '全局热键当前不可用（键盘钩子未安装）。仍可在主窗口按住按钮说话。'}
+        </div>
+        <div className="setting-hint">
+          提示：当前台程序以更高权限运行（如管理员权限的程序/游戏）时，Windows 安全边界（UIPI）
+          会阻止本应用接收键盘事件，全局 PTT 在这些窗口聚焦时不生效；这是系统限制，无法绕过。
+        </div>
+        <div className="setting-hint">本应用只读取 PTT 按键的按下与抬起，不记录任何按键内容。</div>
+      </section>
+      {notice && <div className="notice">{notice}</div>}
+    </main>
+  )
 }
 
 function statusText(snapshot: AppSnapshot) {
@@ -166,7 +266,6 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(emptySnapshot)
   const [started, setStarted] = useState(false)
   const [runtimeMissing, setRuntimeMissing] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [notice, setNotice] = useState('')
   const [pwdPrompt, setPwdPrompt] = useState<{ id: number; name: string } | null>(null)
   const [pwdError, setPwdError] = useState('')
@@ -176,6 +275,10 @@ export default function App() {
   const [levels, setLevels] = useState<LevelPayload>({ mic: 0, out: 0 })
   const promptRef = useRef(pwdPrompt)
   promptRef.current = pwdPrompt
+  // M3 A4：设置窗口复用同一 React 应用与后端状态，按窗口标签路由。
+  const isSettingsWindow = useMemo(() => {
+    try { return getCurrentWebviewWindow().label === 'settings' } catch { return false }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -264,12 +367,13 @@ export default function App() {
   }
 
   if (runtimeMissing || (started && !snapshot.runtime_available)) return <RuntimeMissing />
+  if (isSettingsWindow) return <SettingsPage snapshot={snapshot} started={started} />
   if (!started) return <main className="loading-page"><div className="loader" /><span>正在启动 MicaSpeak…</span></main>
   const noticeEl = notice ? <div className="notice">{notice}</div> : null
   if (!connected) return <>{noticeEl}<ConnectForm snapshot={snapshot} onConnect={connect} onConnectBookmark={(b) => void connectBookmark(b)} onSave={save} onDelete={(id) => void removeBookmark(id)} /></>
   return (
     <main className="app-shell">
-      <header className="topbar"><div className={`status-dot ${snapshot.connection.status}`} /><div className="server-title"><strong>{snapshot.connection.server_name || 'TS3 服务器'}</strong><span>{snapshot.connection.server_address}</span></div><span className="status-text">{statusText(snapshot)}</span><button className="icon-button" onClick={() => setSettingsOpen(true)} aria-label="打开设置">⚙</button><button className="icon-button" onClick={() => void disconnect()} aria-label="断开连接">×</button></header>
+      <header className="topbar"><div className={`status-dot ${snapshot.connection.status}`} /><div className="server-title"><strong>{snapshot.connection.server_name || 'TS3 服务器'}</strong><span>{snapshot.connection.server_address}</span></div><span className="status-text">{statusText(snapshot)}</span><button className="icon-button" onClick={() => void tauriInvoke('open_settings').catch((err) => { setNotice(String(err).replace(/^Error:\s*/, '')); setTimeout(() => setNotice(''), 3000) })} aria-label="打开设置">⚙</button><button className="icon-button" onClick={() => void disconnect()} aria-label="断开连接">×</button></header>
       <div className="content-grid"><section className="panel channel-panel"><div className="panel-heading"><span>频道</span><span className="muted">{snapshot.channels.length}</span></div><ChannelTree channels={groupedChannels} talkingIds={talkingIds} onSelect={selectChannel} /></section><section className="panel chat-panel"><div className="tabs"><button className="tab active">当前频道</button><button className="tab">聊天</button></div><div className="chat-empty">频道聊天将在 M2 接入</div></section></div>
       <footer className="statusbar"><button
         className={`ptt-chip hold ${transmitting ? 'active' : ''}`}
@@ -280,7 +384,6 @@ export default function App() {
         onPointerCancel={() => setTransmit(false)}
         onLostPointerCapture={() => setTransmit(false)}
       >{transmitting ? '说话中…' : '按住说话'}</button><span className="level-meter" aria-label="麦克风电平"><span className="level-fill" style={{ width: `${Math.min(100, Math.round(levels.mic * 300))}%` }} /></span><span className="talkers">{talking.size ? [...talking.values()].join('、') : '无人说话'}</span></footer>
-      {settingsOpen && <div className="settings-popover"><div className="panel-heading"><strong>设置</strong><button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="关闭设置">×</button></div><p>设置窗口占位入口，音频与悬浮窗将在后续任务接入。</p></div>}
       {pwdPrompt && (
         <ChannelPasswordModal
           name={pwdPrompt.name}

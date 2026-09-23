@@ -3,12 +3,14 @@
 mod app_state;
 mod audio;
 mod conn;
+mod hotkey;
 mod persistence;
+mod settings;
 
-use audio::set_transmit_enabled;
 use app_state::AppState;
 use conn::{connect, disconnect, get_app_snapshot, reconnect, select_channel};
 use persistence::{delete_bookmark, save_bookmark};
+use settings::{open_settings, set_ptt_key};
 use tauri::Manager;
 
 /// 极简 stderr 日志：设置 MICASPEAK_LOG=debug/trace 时启用，
@@ -70,13 +72,22 @@ fn main() {
             disconnect,
             reconnect,
             select_channel,
-            set_transmit_enabled,
+            audio::set_transmit_enabled,
+            set_ptt_key,
+            open_settings,
             save_bookmark,
             delete_bookmark
         ])
         .setup(|app| {
             let handle = app.handle().clone();
             let state = app.state::<AppState>().inner().clone();
+            // M3 A：全局 PTT 低级键盘钩子。目标键取自配置，钩子线程常驻消息泵。
+            let vk = persistence::load_config()
+                .map(|(config, _)| config.voice.ptt_key_vk)
+                .unwrap_or(0xA2);
+            hotkey::set_target_vk(vk);
+            hotkey::spawn_hook_thread();
+            tauri::async_runtime::spawn(hotkey::watch_task(state.audio.clone()));
             // M2 音频事件任务：转发/限频推送/健康重建（任务必须被 Tokio 实际轮询，
             // 见 M0 教训）。全部消费 AppState 原子量与通道，不碰音频回调。
             let (relay_handle, relay_state) = (handle.clone(), state.clone());

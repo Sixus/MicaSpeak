@@ -31,6 +31,18 @@ export type TalkerState = {
   last_active_ms: number
 }
 
+export type VoiceMode = 'ptt' | 'vad'
+
+export type VoiceSettings = {
+  mode: VoiceMode
+  ptt_key_vk: number
+  vad_threshold: number
+  denoise: boolean
+  input_device: string | null
+  output_device: string | null
+  hotkey_installed: boolean
+}
+
 export type AppSnapshot = {
   connection: {
     status: ConnectionStatus
@@ -43,6 +55,7 @@ export type AppSnapshot = {
   last_channel: string | null
   runtime_available: boolean
   talking: TalkerState[]
+  voice: VoiceSettings
 }
 
 export const emptySnapshot: AppSnapshot = {
@@ -52,4 +65,13 @@ export const emptySnapshot: AppSnapshot = {
   last_channel: null,
   runtime_available: true,
   talking: [],
+  voice: {
+    mode: 'ptt',
+    ptt_key_vk: 0xa2,
+    vad_threshold: 0.5,
+    denoise: false,
+    input_device: null,
+    output_device: null,
+    hotkey_installed: false,
+  },
 }

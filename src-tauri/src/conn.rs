@@ -64,6 +64,7 @@ pub struct AppSnapshot {
     pub last_channel: Option<String>,
     pub runtime_available: bool,
     pub talking: Vec<crate::app_state::TalkerState>,
+    pub voice: crate::persistence::VoiceSettingsView,
 }
 
 pub enum ConnCommand {
