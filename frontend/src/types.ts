@@ -43,6 +43,31 @@ export type VoiceSettings = {
   hotkey_installed: boolean
 }
 
+// M4 聊天：结构镜像 Rust chat.rs（snake_case 序列化）。
+export type ChatMessageView = {
+  id: number
+  from_client_id: number
+  from_name: string
+  is_self: boolean
+  text: string
+  time_ms: number
+}
+
+export type ChatTabView = {
+  kind: 'channel' | 'private'
+  target_id: number
+  title: string
+  unread: number
+  messages: ChatMessageView[]
+}
+
+export type ChatMessageEvent = {
+  kind: 'channel' | 'private'
+  target_id: number
+  unread: number
+  message: ChatMessageView
+}
+
 export type AppSnapshot = {
   connection: {
     status: ConnectionStatus
@@ -56,6 +81,8 @@ export type AppSnapshot = {
   runtime_available: boolean
   talking: TalkerState[]
   voice: VoiceSettings
+  own_channel_id: number
+  chat: ChatTabView[]
 }
 
 export const emptySnapshot: AppSnapshot = {
@@ -65,6 +92,8 @@ export const emptySnapshot: AppSnapshot = {
   last_channel: null,
   runtime_available: true,
   talking: [],
+  own_channel_id: 0,
+  chat: [],
   voice: {
     mode: 'ptt',
     ptt_key_vk: 0xa2,

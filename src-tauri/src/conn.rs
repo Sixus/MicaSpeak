@@ -65,12 +65,18 @@ pub struct AppSnapshot {
     pub runtime_available: bool,
     pub talking: Vec<crate::app_state::TalkerState>,
     pub voice: crate::persistence::VoiceSettingsView,
+    pub own_channel_id: u64,
+    pub chat: Vec<crate::chat::ChatTabView>,
 }
 
 pub enum ConnCommand {
     SelectChannel {
         id: u64,
         password: Option<String>,
+        result: oneshot::Sender<Result<(), String>>,
+    },
+    SendChannelMessage {
+        text: String,
         result: oneshot::Sender<Result<(), String>>,
     },
     Shutdown,
@@ -250,6 +256,8 @@ async fn disconnect_inner(state: &AppState) {
     state.audio.stop();
     state.talking_clear();
     state.set_own_client(0);
+    // 聊天历史运行内保留（F3），只重置"当前频道"事实。
+    state.chat.set_own_channel(0);
     *state.channels.lock().await = Vec::new();
     *state.connection.lock().await = ConnectionPayload::default();
 }
@@ -368,6 +376,16 @@ async fn connection_loop(
                     }
                 }
             }
+            ConnCommand::SendChannelMessage { text, result } => {
+                let res = send_channel_message_inner(&app, &state, &mut handle, text).await;
+                let _ = result.send(res.clone());
+                if let Err(message) = res {
+                    let _ = app.emit(
+                        "error://user",
+                        serde_json::json!({ "message": message }),
+                    );
+                }
+            }
         }
     }
 }
@@ -389,8 +407,15 @@ async fn driver_loop(
             break;
         }
         match item {
-            Ok(SyncStreamItem::BookEvents(_)) => {
+            Ok(SyncStreamItem::BookEvents(events)) => {
                 publish_state(&app, &state, &mut sync, &address, id).await;
+                // 文字消息与 book 变更同批到达；先刷新 own_channel 再路由，
+                // 保证消息归入正确频道标签（任务卡 A3）。
+                for event in events {
+                    if let tsclientlib::events::Event::Message { target, invoker, message } = event {
+                        handle_incoming_text(&app, &state, target, invoker, message).await;
+                    }
+                }
                 // 首次 BookEvents 时频道列表可能尚未就绪：找不到目标就保留
                 // auto_join 等下一次事件重试，找到（含密码频道）才消费掉。
                 if let Some(name) = &auto_join {
@@ -509,6 +534,13 @@ async fn publish_state(
         .collect::<Vec<_>>();
     // 真正 connected：此刻起允许音频发送流存在（A1 生命周期起点）。
     state.audio.ensure_started(id);
+    // 当前频道：频道消息路由与未读判定的依据（publish 先于同批消息处理）。
+    let own_channel = clients
+        .iter()
+        .find(|(cid, _, _)| *cid as u16 == own_client.0)
+        .map(|(_, _, channel)| *channel)
+        .unwrap_or(0);
+    state.chat.set_own_channel(own_channel);
     *state.connection.lock().await = ConnectionPayload {
         status: "connected".into(),
         reason: None,
@@ -519,6 +551,99 @@ async fn publish_state(
     let _ = app.emit("connection://state", state.connection.lock().await.clone());
     let _ = app.emit("channel://tree", nodes);
     state.emit_snapshot(app).await;
+}
+
+/// 收到的文字消息路由（任务卡 A3：按 id，不按昵称）。
+/// 频道消息协议不携带频道 id，归属=自己当前所在频道；
+/// invoker 为自己说明服务器回显了已本地落账的消息，跳过去重。
+async fn handle_incoming_text(
+    app: &AppHandle,
+    state: &AppState,
+    target: tsclientlib::MessageTarget,
+    invoker: tsclientlib::Invoker,
+    message: String,
+) {
+    let invoker_id = u64::from(invoker.id.0);
+    if invoker_id == state.own_client() {
+        return;
+    }
+    match target {
+        tsclientlib::MessageTarget::Channel => {
+            let channel_id = state.chat.own_channel();
+            let title = state
+                .channels
+                .lock()
+                .await
+                .iter()
+                .find(|c| c.id == channel_id)
+                .map(|c| c.name.clone())
+                .unwrap_or_default();
+            let update = state.chat.receive(
+                crate::chat::ChatKey::Channel(channel_id),
+                &title,
+                invoker_id,
+                invoker.name,
+                message,
+            );
+            state.emit_chat_update(app, &update);
+        }
+        tsclientlib::MessageTarget::Client(_) => {
+            // 私聊按发送者 client_id 路由；M4a 先落账，M4b 接标签 UI。
+            let update = state.chat.receive(
+                crate::chat::ChatKey::Client(invoker_id),
+                "",
+                invoker_id,
+                invoker.name,
+                message,
+            );
+            state.emit_chat_update(app, &update);
+        }
+        _ => {}
+    }
+}
+
+/// 频道消息发送：服务器回执成功才本地落账并广播。
+async fn send_channel_message_inner(
+    app: &AppHandle,
+    state: &AppState,
+    handle: &mut SyncConnectionHandle,
+    text: String,
+) -> Result<(), String> {
+    // with_connection 的闭包要求 'static，单独克隆一份文本进去
+    let text_for_packet = text.clone();
+    let packet = handle
+        .with_connection(move |con| {
+            con.get_state()
+                .map(|book| book.send_message(tsclientlib::MessageTarget::Channel, &text_for_packet))
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("发送失败：{e}"))?;
+    handle
+        .send_command(packet)
+        .await
+        .map_err(|e| friendly_error(&e))?;
+    let channel_id = state.chat.own_channel();
+    let title = state
+        .channels
+        .lock()
+        .await
+        .iter()
+        .find(|c| c.id == channel_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+    let own_client = state.own_client();
+    let nickname = state.self_nickname();
+    let update = state.chat.record_self(
+        crate::chat::ChatKey::Channel(channel_id),
+        &title,
+        own_client,
+        nickname,
+        text,
+    );
+    state.emit_chat_update(app, &update);
+    Ok(())
 }
 
 async fn move_to_channel(

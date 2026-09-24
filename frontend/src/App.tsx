@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import {
+  subscribeChatMessage,
   subscribeLevel,
   subscribeRuntimeMissing,
   subscribeSnapshot,
@@ -10,7 +11,7 @@ import {
   type LevelPayload,
   type TalkingPayload,
 } from './api'
-import { emptySnapshot, type AppSnapshot, type Bookmark, type ChannelNode } from './types'
+import { emptySnapshot, type AppSnapshot, type Bookmark, type ChannelNode, type ChatMessageEvent, type ChatTabView } from './types'
 
 const fallbackSnapshot: AppSnapshot = {
   ...emptySnapshot,
@@ -311,6 +312,163 @@ function ChannelPasswordModal({ name, error, busy, onSubmit, onCancel }: {
   )
 }
 
+// ---- M4a：频道聊天（事实状态在 Rust，这里只渲染快照并追加事件） ----
+
+const URL_RE = /(https?:\/\/[^\s<>"'\]]+)/g
+
+function renderMessageBody(text: string, onNotice: (message: string) => void): ReactNode[] {
+  const parts: ReactNode[] = []
+  let last = 0
+  // BBCode（如 [b]、[url=…]）原样作为文本显示，仅 http/https 裸链接可点击
+  for (const match of text.matchAll(URL_RE)) {
+    const idx = match.index ?? 0
+    if (idx > last) parts.push(text.slice(last, idx))
+    const url = match[0]
+    parts.push(
+      <a
+        key={`url-${idx}`}
+        className="chat-link"
+        href={url}
+        title={url}
+        onClick={(e) => {
+          e.preventDefault()
+          tauriInvoke('open_url', { url }).catch((err) => onNotice(String(err).replace(/^Error:\s*/, '')))
+        }}
+      >{url}</a>
+    )
+    last = idx + url.length
+  }
+  if (last < text.length) parts.push(text.slice(last))
+  return parts
+}
+
+function formatTime(ms: number): string {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function ChatPanel({ tabs, ownChannelId, channels, onNotice }: {
+  tabs: ChatTabView[]
+  ownChannelId: number
+  channels: ChannelNode[]
+  onNotice: (message: string) => void
+}) {
+  // null = 跟随当前频道（事实在 Rust）；点历史标签只是本地查看选择
+  const [viewing, setViewing] = useState<{ kind: ChatTabView['kind']; id: number } | null>(null)
+  const activeTarget = viewing ?? { kind: 'channel' as const, id: ownChannelId }
+  const activeTab = tabs.find((t) => t.kind === activeTarget.kind && t.target_id === activeTarget.id) ?? null
+  // 切换频道后回到跟随当前频道
+  useEffect(() => { setViewing(null) }, [ownChannelId])
+
+  const viewingCurrent = viewing === null || (viewing.kind === 'channel' && viewing.id === ownChannelId)
+  const channelName = (id: number) => channels.find((c) => c.id === id)?.name
+  const activeTitle = activeTab
+    ? (channelName(activeTab.target_id) ?? (activeTab.title || '频道'))
+    : (channelName(ownChannelId) ?? '频道')
+
+  // 滚动：贴底时自动滚底；上翻暂停，回底恢复
+  const listRef = useRef<HTMLDivElement>(null)
+  const atBottomRef = useRef(true)
+  const [detached, setDetached] = useState(false)
+  const messages = activeTab?.messages ?? []
+  useEffect(() => {
+    if (atBottomRef.current && listRef.current) {
+      const el = listRef.current
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
+    }
+  }, [messages.length, activeTab?.target_id])
+  const onScroll = () => {
+    const el = listRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8
+    atBottomRef.current = atBottom
+    setDetached(!atBottom)
+  }
+  const scrollToBottom = () => {
+    const el = listRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    atBottomRef.current = true
+    setDetached(false)
+  }
+
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const send = async () => {
+    const text = draft.trim()
+    if (!text || sending) return
+    setSending(true)
+    try {
+      await tauriInvoke('send_channel_message', { text })
+      setDraft('')
+      atBottomRef.current = true
+    } catch (err) {
+      onNotice(String(err).replace(/^Error:\s*/, ''))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const channelTabs = tabs.filter((t) => t.kind === 'channel')
+  return (
+    <section className="panel chat-panel">
+      <div className="tabs" role="tablist">
+        {channelTabs.map((tab) => {
+          const active = tab.kind === activeTarget.kind && tab.target_id === activeTarget.id
+          const title = channelName(tab.target_id) ?? (tab.title || `频道 ${tab.target_id}`)
+          return (
+            <button
+              key={`tab-${tab.kind}-${tab.target_id}`}
+              className={`tab ${active ? 'active' : ''}`}
+              role="tab"
+              aria-selected={active}
+              onClick={() => setViewing({ kind: tab.kind, id: tab.target_id })}
+            >
+              {title}
+              {tab.unread > 0 && <span className="tab-unread" aria-label={`${tab.unread} 条未读`} />}
+            </button>
+          )
+        })}
+        {!channelTabs.length && <button className="tab active">频道</button>}
+      </div>
+      <div className="chat-messages" ref={listRef} onScroll={onScroll}>
+        {messages.map((m) => (
+          <div className="chat-row" key={m.id}>
+            <span className="chat-time">{formatTime(m.time_ms)}</span>
+            <span className={`chat-nick ${m.is_self ? 'self' : ''}`}>{m.from_name}{m.is_self ? '（我）' : ''}</span>
+            <span className="chat-text">{renderMessageBody(m.text, onNotice)}</span>
+          </div>
+        ))}
+        {!messages.length && <div className="chat-empty">{viewingCurrent ? '暂无消息，回车即可发送第一条' : '该频道暂无历史消息'}</div>}
+      </div>
+      {detached && (
+        <button className="chat-back-bottom" onClick={scrollToBottom}>↓ 回到底部</button>
+      )}
+      <div className="chat-composer">
+        <input
+          className="chat-input"
+          value={draft}
+          disabled={!viewingCurrent}
+          placeholder={viewingCurrent ? `发送消息到 ${activeTitle}…` : '正在查看其他频道，点击当前频道标签后可发送'}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              void send()
+            }
+          }}
+        />
+        <button
+          className="chat-send"
+          aria-label="发送消息"
+          disabled={!viewingCurrent || !draft.trim() || sending}
+          onClick={() => void send()}
+        >➤</button>
+      </div>
+    </section>
+  )
+}
+
 function ConnectForm({ snapshot, onConnect, onConnectBookmark, onSave, onDelete }: {
   snapshot: AppSnapshot
   onConnect: (address: string, nickname: string, password: string) => Promise<void>
@@ -389,6 +547,8 @@ export default function App() {
   // M2c：说话人状态与电平（只有 id/名字/电平标量，不放原始音频数据）
   const [talking, setTalking] = useState<Map<number, string>>(new Map())
   const [levels, setLevels] = useState<LevelPayload>({ mic: 0, out: 0, prob: 0 })
+  // M4a：聊天标签（快照整体校正 + chat://message 增量按消息 id 去重追加）
+  const [chatTabs, setChatTabs] = useState<ChatTabView[]>([])
   const promptRef = useRef(pwdPrompt)
   promptRef.current = pwdPrompt
   // M3 A4：设置窗口复用同一 React 应用与后端状态，按窗口标签路由。
@@ -405,8 +565,34 @@ export default function App() {
         offs.push(await subscribeSnapshot((next) => {
           if (!active) return
           setSnapshot(next)
+          setChatTabs(next.chat)
           // 快照是权威状态：用快照里的说话列表整体校正（覆盖漏收的事件）
           setTalking(new Map(next.talking.map((t) => [t.client_id, t.name])))
+        }))
+        offs.push(await subscribeChatMessage((payload) => {
+          if (!active) return
+          setChatTabs((prev) => {
+            const idx = prev.findIndex((t) => t.kind === payload.kind && t.target_id === payload.target_id)
+            if (idx === -1) {
+              return [...prev, {
+                kind: payload.kind,
+                target_id: payload.target_id,
+                title: '',
+                unread: payload.unread,
+                messages: [payload.message],
+              }]
+            }
+            const tab = prev[idx]
+            if (tab.messages.some((m) => m.id === payload.message.id)) return prev
+            const merged: ChatTabView = {
+              ...tab,
+              unread: payload.unread,
+              messages: [...tab.messages, payload.message],
+            }
+            const next = prev.slice()
+            next[idx] = merged
+            return next
+          })
         }))
         offs.push(await subscribeUserError((message) => {
           if (!active) return
@@ -426,6 +612,7 @@ export default function App() {
         const initial = await tauriInvoke<AppSnapshot>('get_app_snapshot')
         if (active) {
           setSnapshot(initial)
+          setChatTabs(initial.chat)
           setTalking(new Map(initial.talking.map((t) => [t.client_id, t.name])))
           setStarted(true)
         }
@@ -491,7 +678,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar"><div className={`status-dot ${snapshot.connection.status}`} /><div className="server-title"><strong>{snapshot.connection.server_name || 'TS3 服务器'}</strong><span>{snapshot.connection.server_address}</span></div><span className="status-text">{statusText(snapshot)}</span><button className="icon-button" onClick={() => void tauriInvoke('open_settings').catch((err) => { setNotice(String(err).replace(/^Error:\s*/, '')); setTimeout(() => setNotice(''), 3000) })} aria-label="打开设置">⚙</button><button className="icon-button" onClick={() => void disconnect()} aria-label="断开连接">×</button></header>
-      <div className="content-grid"><section className="panel channel-panel"><div className="panel-heading"><span>频道</span><span className="muted">{snapshot.channels.length}</span></div><ChannelTree channels={groupedChannels} talkingIds={talkingIds} onSelect={selectChannel} /></section><section className="panel chat-panel"><div className="tabs"><button className="tab active">当前频道</button><button className="tab">聊天</button></div><div className="chat-empty">频道聊天将在 M2 接入</div></section></div>
+      <div className="content-grid"><section className="panel channel-panel"><div className="panel-heading"><span>频道</span><span className="muted">{snapshot.channels.length}</span></div><ChannelTree channels={groupedChannels} talkingIds={talkingIds} onSelect={selectChannel} /></section><ChatPanel tabs={chatTabs} ownChannelId={snapshot.own_channel_id} channels={groupedChannels} onNotice={(message) => { setNotice(message); setTimeout(() => setNotice(''), 3000) }} /></div>
       <footer className="statusbar"><button
         className={`ptt-chip hold ${transmitting ? 'active' : ''}`}
         disabled={!connected}

@@ -1,6 +1,7 @@
 use crate::conn::{AppSnapshot, ConnectionPayload};
 use crate::persistence::{load_config, AppConfig};
 use crate::audio::AudioManager;
+use crate::chat::{ChatStore, ChatUpdate};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -51,6 +52,8 @@ pub struct AppState {
     pub next_conn_id: Arc<AtomicU64>,
     /// M2 音频生命周期：采集/编码/发送开关。
     pub audio: AudioManager,
+    /// M4 聊天事实状态：按目标键的日志、未读、当前频道。
+    pub chat: ChatStore,
     /// 说话人状态：client_id -> 条目（标准互斥锁：会被音频事件任务同步访问）。
     talking: Arc<StdMutex<HashMap<u64, TalkerEntry>>>,
     /// 自己的 client id（publish_state 更新；0 = 未知）。
@@ -75,6 +78,7 @@ impl AppState {
             active: Arc::new(Mutex::new(None)),
             next_conn_id: Arc::new(AtomicU64::new(0)),
             audio: AudioManager::new(),
+            chat: ChatStore::new(),
             talking: Arc::new(StdMutex::new(HashMap::new())),
             own_client: Arc::new(AtomicU64::new(0)),
             self_nickname: Arc::new(StdMutex::new("我".to_string())),
@@ -97,6 +101,12 @@ impl AppState {
             config.voice.view(crate::hotkey::installed())
         };
         let talking = self.talking_list();
+        let own_channel_id = self.chat.own_channel();
+        let channel_names: HashMap<u64, String> = channels
+            .iter()
+            .map(|c| (c.id, c.name.clone()))
+            .collect();
+        let chat = self.chat.view(&channel_names);
         AppSnapshot {
             connection,
             channels,
@@ -105,6 +115,8 @@ impl AppState {
             runtime_available: self.runtime_available,
             talking,
             voice,
+            own_channel_id,
+            chat,
         }
     }
 
@@ -252,6 +264,19 @@ impl AppState {
                 "talking": talking,
                 "is_self": self.is_self(client_id),
                 "timestamp": Self::now_ms(),
+            }),
+        );
+    }
+
+    /// 广播 chat://message（含 Rust 权威未读数）。
+    pub fn emit_chat_update(&self, app: &AppHandle, update: &ChatUpdate) {
+        let _ = app.emit(
+            "chat://message",
+            serde_json::json!({
+                "kind": update.key.kind(),
+                "target_id": update.key.target_id(),
+                "unread": update.unread,
+                "message": update.message,
             }),
         );
     }

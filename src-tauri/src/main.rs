@@ -2,6 +2,7 @@
 
 mod app_state;
 mod audio;
+mod chat;
 mod conn;
 mod hotkey;
 mod persistence;
@@ -72,6 +73,8 @@ fn main() {
             disconnect,
             reconnect,
             select_channel,
+            chat::send_channel_message,
+            chat::open_url,
             audio::set_transmit_enabled,
             set_ptt_key,
             open_settings,
