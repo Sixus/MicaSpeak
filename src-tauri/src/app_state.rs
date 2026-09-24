@@ -106,7 +106,12 @@ impl AppState {
             .iter()
             .map(|c| (c.id, c.name.clone()))
             .collect();
-        let chat = self.chat.view(&channel_names);
+        let client_names: HashMap<u64, String> = channels
+            .iter()
+            .flat_map(|c| c.clients.iter())
+            .map(|c| (c.id, c.name.clone()))
+            .collect();
+        let chat = self.chat.view(&channel_names, &client_names);
         AppSnapshot {
             connection,
             channels,

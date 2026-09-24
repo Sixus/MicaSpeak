@@ -91,6 +91,10 @@ pub struct ChatStore {
     next_message_id: Arc<AtomicU64>,
     /// 自己当前所在频道（0=未知）；频道消息归属与未读判定的事实依据。
     own_channel: Arc<AtomicU64>,
+    /// 当前正在查看的私聊对方 client id（0=无）；私聊未读判定的事实依据。
+    viewed_private: Arc<AtomicU64>,
+    /// 已关闭的私聊标签；收到新消息时自动重开（任务卡 B2）。
+    closed: Arc<StdMutex<std::collections::HashSet<ChatKey>>>,
 }
 
 impl ChatStore {
@@ -99,6 +103,8 @@ impl ChatStore {
             logs: Arc::new(StdMutex::new(HashMap::new())),
             next_message_id: Arc::new(AtomicU64::new(1)),
             own_channel: Arc::new(AtomicU64::new(0)),
+            viewed_private: Arc::new(AtomicU64::new(0)),
+            closed: Arc::new(StdMutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -110,8 +116,35 @@ impl ChatStore {
         self.own_channel.store(id, Ordering::Relaxed);
     }
 
-    /// 收到他人消息。频道消息归属当前频道；不在当前频道的标签计未读。
-    /// 私聊（M4b 接 UI）在无标签 UI 阶段一律计未读。
+    /// 用户打开/切换到某私聊标签：确保标签存在、标记正在查看并清未读。
+    pub fn open_private(&self, client_id: u64) {
+        let key = ChatKey::Client(client_id);
+        self.viewed_private.store(client_id, Ordering::Relaxed);
+        self.closed.lock().unwrap().remove(&key);
+        let mut logs = self.logs.lock().unwrap();
+        logs.entry(key).or_insert_with(|| ChatLog::new(String::new())).unread = 0;
+    }
+
+    /// 关闭私聊标签（仅私聊可关；频道标签由当前频道事实驱动）。M4b。
+    pub fn close_tab(&self, key: ChatKey) {
+        if matches!(key, ChatKey::Channel(_)) {
+            return;
+        }
+        self.closed.lock().unwrap().insert(key);
+        if key.target_id() == self.viewed_private.load(Ordering::Relaxed) {
+            self.viewed_private.store(0, Ordering::Relaxed);
+        }
+    }
+
+    /// 断开时重置查看/关闭事实（日志历史保留）。
+    pub fn reset_session(&self) {
+        self.own_channel.store(0, Ordering::Relaxed);
+        self.viewed_private.store(0, Ordering::Relaxed);
+        self.closed.lock().unwrap().clear();
+    }
+
+    /// 收到他人消息。频道消息归属当前频道；私聊按发送者路由。
+    /// 正在查看的标签不计未读；已关闭标签自动重开并计未读（B2）。
     pub fn receive(&self, key: ChatKey, title: &str, from_client_id: u64, from_name: String, text: String) -> ChatUpdate {
         let message = ChatMessage {
             id: self.next_id(),
@@ -121,6 +154,9 @@ impl ChatStore {
             text,
             time_ms: now_ms(),
         };
+        if matches!(key, ChatKey::Client(id)) {
+            self.closed.lock().unwrap().remove(&key);
+        }
         let unread = {
             let mut logs = self.logs.lock().unwrap();
             let log = logs.entry(key).or_insert_with(|| ChatLog::new(title.to_string()));
@@ -128,7 +164,10 @@ impl ChatStore {
                 log.title = title.to_string();
             }
             log.push(message.clone());
-            let viewed = matches!(key, ChatKey::Channel(id) if id == self.own_channel());
+            let viewed = match key {
+                ChatKey::Channel(id) => id == self.own_channel(),
+                ChatKey::Client(id) => id == self.viewed_private.load(Ordering::Relaxed),
+            };
             if !viewed {
                 log.unread = log.unread.saturating_add(1);
             }
@@ -137,7 +176,7 @@ impl ChatStore {
         ChatUpdate { key, unread, message }
     }
 
-    /// 自己发送成功后落账（服务器已回执，不算未读）。
+    /// 自己发送成功后落账（服务器已回执，不算未读）。自己发起的私聊会打开标签。
     pub fn record_self(&self, key: ChatKey, title: &str, own_client_id: u64, from_name: String, text: String) -> ChatUpdate {
         let message = ChatMessage {
             id: self.next_id(),
@@ -147,6 +186,9 @@ impl ChatStore {
             text,
             time_ms: now_ms(),
         };
+        if matches!(key, ChatKey::Client(id)) {
+            self.closed.lock().unwrap().remove(&key);
+        }
         let unread = {
             let mut logs = self.logs.lock().unwrap();
             let log = logs.entry(key).or_insert_with(|| ChatLog::new(title.to_string()));
@@ -159,19 +201,27 @@ impl ChatStore {
         ChatUpdate { key, unread, message }
     }
 
-    /// 快照视图：标签按 当前频道 > 其他频道 > 私聊 排序；
-    /// 标题优先用频道树现名，查不到回退最后已知标题。
-    pub fn view(&self, channel_names: &HashMap<u64, String>) -> Vec<ChatTabView> {
+    /// 快照视图：排除已关闭的私聊标签；其余按 当前频道 > 其他频道 > 私聊 排序；
+    /// 标题优先用频道树现名/私聊对方现昵称，查不到回退最后已知标题。
+    pub fn view(&self, channel_names: &HashMap<u64, String>, client_names: &HashMap<u64, String>) -> Vec<ChatTabView> {
+        let closed = self.closed.lock().unwrap().clone();
         let mut logs = self.logs.lock().unwrap();
         let own_channel = self.own_channel();
         let mut tabs: Vec<ChatTabView> = logs
             .iter_mut()
+            .filter(|(key, _)| !closed.contains(key))
             .map(|(key, log)| {
                 let target_id = key.target_id();
-                let title = channel_names
-                    .get(&target_id)
-                    .cloned()
-                    .unwrap_or_else(|| log.title.clone());
+                let title = match key {
+                    ChatKey::Channel(_) => channel_names
+                        .get(&target_id)
+                        .cloned()
+                        .unwrap_or_else(|| log.title.clone()),
+                    ChatKey::Client(_) => client_names
+                        .get(&target_id)
+                        .cloned()
+                        .unwrap_or_else(|| log.title.clone()),
+                };
                 if !title.is_empty() {
                     log.title = title.clone();
                 }
@@ -268,4 +318,70 @@ pub async fn send_channel_message(state: State<'_, AppState>, text: String) -> R
 #[tauri::command]
 pub async fn open_url(url: String) -> Result<(), String> {
     open_in_browser(&url)
+}
+
+/// 打开/查看私聊标签：创建标签事实、标记正在查看并清未读（任务卡 B1/B2）。
+/// 对方已离开服务器也允许打开（查看历史合法）；后续发送由服务器校验。
+#[tauri::command]
+pub async fn open_private_chat(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    client_id: u64,
+) -> Result<(), String> {
+    if client_id == 0 {
+        return Err("无效的用户".into());
+    }
+    state.chat.open_private(client_id);
+    state.emit_snapshot(&app).await;
+    Ok(())
+}
+
+/// 关闭聊天标签（仅私聊，任务卡 B2）。
+#[tauri::command]
+pub async fn close_chat_tab(
+    state: State<'_, AppState>,
+    kind: String,
+    target_id: u64,
+) -> Result<(), String> {
+    let key = match kind.as_str() {
+        "channel" => crate::chat::ChatKey::Channel(target_id),
+        "private" => crate::chat::ChatKey::Client(target_id),
+        other => return Err(format!("未知的标签类型：{other}")),
+    };
+    state.chat.close_tab(key);
+    Ok(())
+}
+
+/// 私聊消息：按对方 client_id 路由发送，服务器回执即成功（任务卡 B1）。
+#[tauri::command]
+pub async fn send_private_message(
+    state: State<'_, AppState>,
+    client_id: u64,
+    text: String,
+) -> Result<(), String> {
+    let text = text.trim_end().to_string();
+    if text.is_empty() {
+        return Err("消息不能为空".into());
+    }
+    if text.len() > 2000 {
+        return Err("消息过长（上限 2000 字符）".into());
+    }
+    if client_id == 0 {
+        return Err("无效的私聊对象".into());
+    }
+    if client_id == state.own_client() {
+        return Err("不能给自己发私聊".into());
+    }
+    let tx = state
+        .conn_tx
+        .lock()
+        .await
+        .as_ref()
+        .map(|o| o.tx.clone())
+        .ok_or_else(|| "当前没有活动连接".to_string())?;
+    let (result_tx, result_rx) = oneshot::channel();
+    tx.send(ConnCommand::SendPrivateMessage { client_id, text, result: result_tx })
+        .await
+        .map_err(|_| "连接任务已结束".to_string())?;
+    result_rx.await.map_err(|_| "连接任务已结束".to_string())?
 }

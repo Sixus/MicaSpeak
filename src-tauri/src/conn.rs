@@ -79,6 +79,11 @@ pub enum ConnCommand {
         text: String,
         result: oneshot::Sender<Result<(), String>>,
     },
+    SendPrivateMessage {
+        client_id: u64,
+        text: String,
+        result: oneshot::Sender<Result<(), String>>,
+    },
     Shutdown,
 }
 
@@ -256,8 +261,8 @@ async fn disconnect_inner(state: &AppState) {
     state.audio.stop();
     state.talking_clear();
     state.set_own_client(0);
-    // 聊天历史运行内保留（F3），只重置"当前频道"事实。
-    state.chat.set_own_channel(0);
+    // 聊天历史运行内保留（F3），只重置"当前频道/正在查看/已关闭"等会话事实。
+    state.chat.reset_session();
     *state.channels.lock().await = Vec::new();
     *state.connection.lock().await = ConnectionPayload::default();
 }
@@ -378,6 +383,16 @@ async fn connection_loop(
             }
             ConnCommand::SendChannelMessage { text, result } => {
                 let res = send_channel_message_inner(&app, &state, &mut handle, text).await;
+                let _ = result.send(res.clone());
+                if let Err(message) = res {
+                    let _ = app.emit(
+                        "error://user",
+                        serde_json::json!({ "message": message }),
+                    );
+                }
+            }
+            ConnCommand::SendPrivateMessage { client_id, text, result } => {
+                let res = send_private_message_inner(&app, &state, &mut handle, client_id, text).await;
                 let _ = result.send(res.clone());
                 if let Err(message) = res {
                     let _ = app.emit(
@@ -588,10 +603,19 @@ async fn handle_incoming_text(
             state.emit_chat_update(app, &update);
         }
         tsclientlib::MessageTarget::Client(_) => {
-            // 私聊按发送者 client_id 路由；M4a 先落账，M4b 接标签 UI。
+            // 私聊按发送者 client_id 路由（任务卡 B2）；标题取对方当前昵称。
+            let name = state
+                .channels
+                .lock()
+                .await
+                .iter()
+                .flat_map(|c| c.clients.iter())
+                .find(|c| c.id == invoker_id)
+                .map(|c| c.name.clone())
+                .unwrap_or_default();
             let update = state.chat.receive(
                 crate::chat::ChatKey::Client(invoker_id),
-                "",
+                &name,
                 invoker_id,
                 invoker.name,
                 message,
@@ -638,6 +662,58 @@ async fn send_channel_message_inner(
     let update = state.chat.record_self(
         crate::chat::ChatKey::Channel(channel_id),
         &title,
+        own_client,
+        nickname,
+        text,
+    );
+    state.emit_chat_update(app, &update);
+    Ok(())
+}
+
+/// 私聊消息发送：按对方 client_id 路由，服务器回执成功才本地落账并广播。
+/// 自己发起会同时打开该私聊标签（open 事实，任务卡 B1）。
+async fn send_private_message_inner(
+    app: &AppHandle,
+    state: &AppState,
+    handle: &mut SyncConnectionHandle,
+    client_id: u64,
+    text: String,
+) -> Result<(), String> {
+    // with_connection 的闭包要求 'static，单独克隆一份文本进去
+    let text_for_packet = text.clone();
+    let packet = handle
+        .with_connection(move |con| {
+            con.get_state()
+                .map(|book| {
+                    book.send_message(
+                        tsclientlib::MessageTarget::Client(tsclientlib::ClientId(client_id as u16)),
+                        &text_for_packet,
+                    )
+                })
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("发送失败：{e}"))?;
+    handle
+        .send_command(packet)
+        .await
+        .map_err(|e| friendly_error(&e))?;
+    let name = state
+        .channels
+        .lock()
+        .await
+        .iter()
+        .flat_map(|c| c.clients.iter())
+        .find(|c| c.id == client_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+    state.chat.open_private(client_id);
+    let own_client = state.own_client();
+    let nickname = state.self_nickname();
+    let update = state.chat.record_self(
+        crate::chat::ChatKey::Client(client_id),
+        &name,
         own_client,
         nickname,
         text,

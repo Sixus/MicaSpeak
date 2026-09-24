@@ -103,6 +103,25 @@ button:disabled { cursor: default; opacity: .55; }
   .chat-input:disabled { background: rgba(255,255,255,.03); color: rgba(255,255,255,.45); }
 }
 
+/* M4b 私聊标签与右键菜单 */
+.tab-private { display: inline-flex; align-items: center; gap: 2px; padding: 0 4px 0 0; }
+.tab-private .tab-main { display: inline-flex; align-items: center; gap: 5px; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #6e737b; font-size: 12px; }
+.tab-private.active .tab-main { border-bottom-color: #0078d4; color: #1a1a1a; }
+.tab-private .tab-close { width: 16px; height: 16px; flex: none; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #8a8f96; font-size: 12px; line-height: 1; }
+.tab-private .tab-close:hover { background: rgba(189,48,54,.12); color: #bd3036; }
+.ctx-menu { position: fixed; z-index: 60; min-width: 150px; padding: 4px; border: 1px solid rgba(0,0,0,.12); border-radius: 6px; background: #fff; box-shadow: 0 10px 26px rgba(0,0,0,.18); }
+.ctx-menu button { display: block; width: 100%; padding: 7px 10px; border: 0; border-radius: 4px; background: transparent; color: #1a1a1a; font-size: 12.5px; text-align: left; }
+.ctx-menu button:hover { background: rgba(0,120,212,.1); }
+@media (prefers-color-scheme: dark) {
+  .tab-private .tab-main { color: rgba(255,255,255,.85); }
+  .tab-private.active .tab-main { border-bottom-color: #0078d4; color: #fff; }
+  .tab-private .tab-close { color: rgba(255,255,255,.55); }
+  .tab-private .tab-close:hover { background: rgba(229,72,77,.16); color: #e5484d; }
+  .ctx-menu { border-color: rgba(255,255,255,.12); background: #2b2b2b; box-shadow: 0 10px 26px rgba(0,0,0,.4); }
+  .ctx-menu button { color: rgba(255,255,255,.88); }
+  .ctx-menu button:hover { background: rgba(75,163,232,.16); }
+}
+
 /* M3 设置窗口 */
 .settings-page { min-height: 100vh; padding: 26px 14px; background: radial-gradient(120% 90% at 15% 0%, #eef2f8 0%, #eaecef 45%, #f3f3f3 100%); overflow: auto; }
 .settings-header { display: flex; align-items: baseline; gap: 8px; max-width: 460px; margin: 0 auto 12px; }
