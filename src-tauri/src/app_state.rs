@@ -54,6 +54,8 @@ pub struct AppState {
     pub audio: AudioManager,
     /// M4 聊天事实状态：按目标键的日志、未读、当前频道。
     pub chat: ChatStore,
+    /// M4c 悬浮窗会话事实（开关持久化在 config，编辑/可见是瞬态）。
+    pub overlay: crate::overlay::OverlayState,
     /// 说话人状态：client_id -> 条目（标准互斥锁：会被音频事件任务同步访问）。
     talking: Arc<StdMutex<HashMap<u64, TalkerEntry>>>,
     /// 自己的 client id（publish_state 更新；0 = 未知）。
@@ -79,6 +81,7 @@ impl AppState {
             next_conn_id: Arc::new(AtomicU64::new(0)),
             audio: AudioManager::new(),
             chat: ChatStore::new(),
+            overlay: crate::overlay::OverlayState::default(),
             talking: Arc::new(StdMutex::new(HashMap::new())),
             own_client: Arc::new(AtomicU64::new(0)),
             self_nickname: Arc::new(StdMutex::new("我".to_string())),
@@ -112,6 +115,10 @@ impl AppState {
             .map(|c| (c.id, c.name.clone()))
             .collect();
         let chat = self.chat.view(&channel_names, &client_names);
+        let overlay_enabled = {
+            let config = self.config.lock().await;
+            config.overlay.enabled
+        };
         AppSnapshot {
             connection,
             channels,
@@ -122,6 +129,7 @@ impl AppState {
             voice,
             own_channel_id,
             chat,
+            overlay_enabled,
         }
     }
 

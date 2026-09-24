@@ -38,3 +38,9 @@ export type LevelPayload = { mic: number; out: number; prob: number }
 export async function subscribeLevel(onLevel: (payload: LevelPayload) => void): Promise<UnlistenFn> {
   return listen<LevelPayload>('voice://level', (event) => onLevel(event.payload))
 }
+
+export type OverlayStatePayload = { visible: boolean; editing: boolean; talkers: string[] }
+
+export async function subscribeOverlayState(onState: (payload: OverlayStatePayload) => void): Promise<UnlistenFn> {
+  return listen<OverlayStatePayload>('overlay://state', (event) => onState(event.payload))
+}

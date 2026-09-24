@@ -1,7 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "MicaSpeak 主窗口与设置窗口 IPC 权限：允许事件订阅与应用命令",
-  "windows": ["main", "settings"],
-  "permissions": ["core:default"]
+  "description": "MicaSpeak 主窗口/设置窗口/悬浮窗 IPC 权限：事件订阅、应用命令与悬浮窗拖动",
+  "windows": ["main", "settings", "overlay"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-outer-position"
+  ]
 }

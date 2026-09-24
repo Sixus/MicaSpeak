@@ -67,6 +67,7 @@ pub struct AppSnapshot {
     pub voice: crate::persistence::VoiceSettingsView,
     pub own_channel_id: u64,
     pub chat: Vec<crate::chat::ChatTabView>,
+    pub overlay_enabled: bool,
 }
 
 pub enum ConnCommand {

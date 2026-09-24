@@ -122,6 +122,21 @@ button:disabled { cursor: default; opacity: .55; }
   .ctx-menu button:hover { background: rgba(75,163,232,.16); }
 }
 
+/* M4c 悬浮窗（透明窗口内绘制的药丸） */
+.overlay-pill { width: 260px; min-height: 80px; display: flex; flex-direction: column; overflow: hidden; border-radius: 12px; background: rgba(0,0,0,0.70); box-shadow: 0 10px 30px -8px rgba(0,0,0,0.6); color: #fff; }
+.overlay-pill.editing { outline: 2px dashed rgba(0,140,255,.85); outline-offset: -2px; }
+.overlay-editbar { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 8px; background: rgba(0,120,212,.85); font-size: 11px; }
+.overlay-done { padding: 2px 10px; border: 0; border-radius: 4px; background: rgba(255,255,255,.92); color: #1a1a1a; font-size: 11px; font-weight: 600; }
+.overlay-done:hover { background: #fff; }
+.overlay-body { flex: 1; display: flex; min-height: 0; }
+.overlay-handle { width: 14px; display: grid; place-items: center; flex: 0 0 auto; cursor: move; }
+.overlay-handle span { width: 6px; height: 40px; border-radius: 999px; background: rgba(255,255,255,0.35); }
+.overlay-speakers { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 8px; padding: 12px 14px 12px 2px; }
+.overlay-speaker { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overlay-mic { width: 20px; height: 20px; flex: 0 0 auto; border-radius: 999px; background: rgba(0,120,212,0.9); position: relative; }
+.overlay-mic::after { content: ''; position: absolute; left: 7px; top: 4px; width: 6px; height: 9px; border-radius: 3px; background: #fff; }
+.overlay-empty { font-size: 12.5px; color: rgba(255,255,255,0.55); }
+
 /* M3 设置窗口 */
 .settings-page { min-height: 100vh; padding: 26px 14px; background: radial-gradient(120% 90% at 15% 0%, #eef2f8 0%, #eaecef 45%, #f3f3f3 100%); overflow: auto; }
 .settings-header { display: flex; align-items: baseline; gap: 8px; max-width: 460px; margin: 0 auto 12px; }

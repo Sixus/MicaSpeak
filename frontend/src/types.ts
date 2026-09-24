@@ -81,6 +81,7 @@ export type AppSnapshot = {
   runtime_available: boolean
   talking: TalkerState[]
   voice: VoiceSettings
+  overlay_enabled: boolean
   own_channel_id: number
   chat: ChatTabView[]
 }
@@ -94,6 +95,7 @@ export const emptySnapshot: AppSnapshot = {
   talking: [],
   own_channel_id: 0,
   chat: [],
+  overlay_enabled: false,
   voice: {
     mode: 'ptt',
     ptt_key_vk: 0xa2,

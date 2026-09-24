@@ -3,12 +3,14 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import {
   subscribeChatMessage,
   subscribeLevel,
+  subscribeOverlayState,
   subscribeRuntimeMissing,
   subscribeSnapshot,
   subscribeTalking,
   subscribeUserError,
   tauriInvoke,
   type LevelPayload,
+  type OverlayStatePayload,
   type TalkingPayload,
 } from './api'
 import { emptySnapshot, type AppSnapshot, type Bookmark, type ChannelNode, type ChatMessageEvent, type ChatTabView, type ClientNode } from './types'
@@ -222,6 +224,37 @@ function SettingsPage({ snapshot, started, levels }: { snapshot: AppSnapshot; st
       <section className="settings-card">
         <div className="section-label">系统降噪</div>
         <div className="setting-hint">不可用（本版本未启用系统级降噪探测，软件降噪不受影响）。</div>
+      </section>
+
+      <section className="settings-card">
+        <div className="section-label">悬浮窗</div>
+        <label className="setting-row check-row">
+          <input
+            type="checkbox"
+            checked={snapshot.overlay_enabled}
+            onChange={(e) => {
+              const enabled = e.target.checked
+              tauriInvoke('set_overlay_enabled', { enabled })
+                .then(() => showNotice(enabled ? '悬浮窗已开启' : '悬浮窗已关闭'))
+                .catch((err) => showNotice(String(err).replace(/^Error:\s*/, '')))
+            }}
+          />
+          <span>说话时显示悬浮窗</span>
+        </label>
+        <div className="setting-row">
+          <span className="setting-label">位置</span>
+          <button
+            className="secondary-button"
+            disabled={!snapshot.overlay_enabled}
+            onClick={() => tauriInvoke('set_overlay_editing', { editing: true })
+              .then(() => showNotice('已进入编辑模式：拖动悬浮窗把手调整位置，点悬浮窗上的"完成"保存'))
+              .catch((err) => showNotice(String(err).replace(/^Error:\s*/, '')))
+            }
+          >编辑位置…</button>
+        </div>
+        <div className="setting-hint">
+          有人说话时显示昵称，停止约 1 秒后隐藏；位置改动会自动保存。独占全屏的游戏画面中悬浮窗不可见（已知限制）。
+        </div>
       </section>
 
       {notice && <div className="notice">{notice}</div>}
@@ -599,7 +632,70 @@ function BookmarkRow({ bookmark, onConnect, onDelete }: { bookmark: Bookmark; on
   )
 }
 
+// M4c：按窗口标签路由。悬浮窗页面只订阅 overlay://state，
+// 不挂主窗口的全套订阅（任务卡 C1）。
 export default function App() {
+  const isOverlay = useMemo(() => {
+    try { return getCurrentWebviewWindow().label === 'overlay' } catch { return false }
+  }, [])
+  return isOverlay ? <OverlayPage /> : <AppShell />
+}
+
+// M4c：悬浮窗页面——透明药丸，把手拖动，编辑模式含"完成"。
+function OverlayPage() {
+  const [state, setState] = useState<OverlayStatePayload>({ visible: false, editing: false, talkers: [] })
+  useEffect(() => {
+    // 悬浮窗窗口本体透明（页面不再绘制底色）。
+    document.documentElement.style.background = 'transparent'
+    document.body.style.background = 'transparent'
+    let active = true
+    let off: (() => void) | undefined
+    subscribeOverlayState((p) => { if (active) setState(p) })
+      .then((un) => { if (active) off = un; else un() })
+    return () => { active = false; off?.() }
+  }, [])
+
+  const onHandlePointerDown = (e: React.PointerEvent) => {
+    e.preventDefault()
+    void getCurrentWebviewWindow().startDragging()
+  }
+  const finishEditing = async () => {
+    try {
+      const pos = await getCurrentWebviewWindow().outerPosition()
+      await tauriInvoke('save_overlay_position', { x: pos.x, y: pos.y })
+      await tauriInvoke('set_overlay_editing', { editing: false })
+    } catch { /* 位置读取失败时保留原位置 */ }
+  }
+
+  if (!state.editing && !state.visible) return null
+  return (
+    <div className={`overlay-pill ${state.editing ? 'editing' : ''}`} data-editing={state.editing}>
+      {state.editing && (
+        <div className="overlay-editbar">
+          <span>拖动左侧把手调整位置</span>
+          <button className="overlay-done" onClick={() => void finishEditing()}>完成</button>
+        </div>
+      )}
+      <div className="overlay-body">
+        <div className="overlay-handle" onPointerDown={onHandlePointerDown} title={state.editing ? '拖动调整位置' : undefined}>
+          <span />
+        </div>
+        <div className="overlay-speakers">
+          {state.talkers.length
+            ? state.talkers.map((n) => (
+              <div className="overlay-speaker" key={n}>
+                <span className="overlay-mic" aria-hidden="true" />
+                <span>{n}</span>
+              </div>
+            ))
+            : <div className="overlay-empty">等待说话…</div>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AppShell() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(emptySnapshot)
   const [started, setStarted] = useState(false)
   const [runtimeMissing, setRuntimeMissing] = useState(false)

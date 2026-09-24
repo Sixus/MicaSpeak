@@ -23,6 +23,9 @@ pub struct AppConfig {
     /// M3 语音设置；旧配置文件缺省时整体取默认（PTT + 左 Ctrl）。
     #[serde(default)]
     pub voice: VoiceConfig,
+    /// M4c 悬浮窗设置；旧配置缺省时整体取默认（关闭，默认位置）。
+    #[serde(default)]
+    pub overlay: OverlayConfig,
 }
 
 fn default_voice_mode() -> String {
@@ -67,6 +70,31 @@ impl Default for VoiceConfig {
             input_device: None,
             output_device: None,
         }
+    }
+}
+
+/// M4c 悬浮窗配置：开关 + 上次窗口位置（外部矩形原点）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OverlayConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_overlay_x")]
+    pub x: i32,
+    #[serde(default = "default_overlay_y")]
+    pub y: i32,
+}
+
+fn default_overlay_x() -> i32 {
+    100
+}
+
+fn default_overlay_y() -> i32 {
+    100
+}
+
+impl Default for OverlayConfig {
+    fn default() -> Self {
+        Self { enabled: false, x: default_overlay_x(), y: default_overlay_y() }
     }
 }
 

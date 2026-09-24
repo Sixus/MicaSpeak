@@ -5,6 +5,7 @@ mod audio;
 mod chat;
 mod conn;
 mod hotkey;
+mod overlay;
 mod persistence;
 mod settings;
 
@@ -78,6 +79,9 @@ fn main() {
             chat::open_private_chat,
             chat::close_chat_tab,
             chat::open_url,
+            overlay::set_overlay_enabled,
+            overlay::set_overlay_editing,
+            overlay::save_overlay_position,
             audio::set_transmit_enabled,
             set_ptt_key,
             open_settings,
@@ -98,6 +102,17 @@ fn main() {
             hotkey::set_target_vk(vk);
             hotkey::spawn_hook_thread();
             tauri::async_runtime::spawn(hotkey::watch_task(state.audio.clone()));
+            // M4c：悬浮窗——启动即创建（隐藏），显隐任务按 TalkingState 驱动。
+            {
+                let (o_handle, o_state) = (handle.clone(), state.clone());
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = overlay::ensure_overlay_window(&o_handle, &o_state).await {
+                        log::warn!("悬浮窗创建失败：{e}");
+                    }
+                });
+            }
+            let (ov_handle, ov_state) = (handle.clone(), state.clone());
+            tauri::async_runtime::spawn(overlay::overlay_task(ov_handle, ov_state));
             // M2 音频事件任务：转发/限频推送/健康重建（任务必须被 Tokio 实际轮询，
             // 见 M0 教训）。全部消费 AppState 原子量与通道，不碰音频回调。
             let (relay_handle, relay_state) = (handle.clone(), state.clone());
