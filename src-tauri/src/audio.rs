@@ -39,24 +39,27 @@ const DENOISE_FRAME: usize = 480;
 /// 采集/播放参数快照（设置命令更新；ensure_started 时读取）。
 #[derive(Clone, Debug)]
 pub struct VoiceParams {
-    /// "ptt" | "vad"
-    pub mode: String,
-    pub vad_threshold: f32,
-    pub denoise: bool,
+    /// None = 系统默认设备。
     pub input_device: Option<String>,
     pub output_device: Option<String>,
 }
 
 impl Default for VoiceParams {
     fn default() -> Self {
-        Self {
-            mode: "ptt".into(),
-            vad_threshold: 0.5,
-            denoise: false,
-            input_device: None,
-            output_device: None,
-        }
+        Self { input_device: None, output_device: None }
     }
+}
+
+/// VAD/降噪的实时开关组（原子量，采集回调每帧读取；
+/// 设置命令直接改这里——免重建流，拖动阈值即时生效）。
+#[derive(Clone)]
+pub struct VoiceControls {
+    /// true = VAD 模式。
+    pub mode_vad: Arc<AtomicBool>,
+    /// VAD 触发阈值（f32 bits 存 0.1..0.9）。
+    pub vad_threshold: Arc<AtomicU32>,
+    /// 软件降噪开关（只决定发送用降噪输出还是原始帧；推理恒开）。
+    pub denoise_on: Arc<AtomicBool>,
 }
 
 /// 连接内 audio 发送任务：拥有独立 handle，等待编码包并转发给服务器。
@@ -107,8 +110,10 @@ pub struct AudioManager {
     pub vad_active: Arc<AtomicBool>,
     /// 最新语音概率（f32 bits；process_frame 返回值，限频推送用）。
     pub vad_prob: Arc<AtomicU32>,
-    /// 采集/播放参数（设置命令同步；重建流时读取）。
+    /// 采集/播放设备（设置命令同步；重建流时读取）。
     voice_params: Arc<StdMutex<VoiceParams>>,
+    /// VAD/降噪实时开关（采集回调每帧读取）。
+    controls: VoiceControls,
     /// 麦克风电平（f32 bits 存 RMS，0..1）。回调写，事件任务读（限频推送）。
     pub mic_level: Arc<AtomicU32>,
     /// 播放混音电平。输出回调写。
@@ -134,6 +139,7 @@ impl Clone for AudioManager {
             vad_active: self.vad_active.clone(),
             vad_prob: self.vad_prob.clone(),
             voice_params: self.voice_params.clone(),
+            controls: self.controls.clone(),
             mic_level: self.mic_level.clone(),
             out_level: self.out_level.clone(),
             active_conn: self.active_conn.clone(),
@@ -155,6 +161,11 @@ impl AudioManager {
             vad_active: Arc::new(AtomicBool::new(false)),
             vad_prob: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             voice_params: Arc::new(StdMutex::new(VoiceParams::default())),
+            controls: VoiceControls {
+                mode_vad: Arc::new(AtomicBool::new(false)),
+                vad_threshold: Arc::new(AtomicU32::new(0.5f32.to_bits())),
+                denoise_on: Arc::new(AtomicBool::new(false)),
+            },
             mic_level: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             out_level: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             active_conn: Arc::new(AtomicU64::new(0)),
@@ -172,6 +183,28 @@ impl AudioManager {
 
     pub fn voice_params(&self) -> VoiceParams {
         self.voice_params.lock().unwrap().clone()
+    }
+
+    /// VAD 阈值即时生效（原子量，免重建流）。
+    pub fn set_vad_threshold(&self, value: f32) {
+        self.controls
+            .vad_threshold
+            .store(value.clamp(0.1, 0.9).to_bits(), Ordering::Relaxed);
+    }
+
+    /// 模式与降噪即时生效。切回 PTT 时清掉 VAD 门控，避免说话状态滞留。
+    pub fn set_mode_denoise(&self, mode_vad: bool, denoise: bool) {
+        self.controls.mode_vad.store(mode_vad, Ordering::Relaxed);
+        self.controls.denoise_on.store(denoise, Ordering::Relaxed);
+        if !mode_vad {
+            self.vad_active.store(false, Ordering::Relaxed);
+        }
+    }
+
+    /// 从 config 的语音字段同步实时开关（连接建立/重连时调用）。
+    pub fn sync_vad_controls(&self, mode_vad: bool, threshold: f32, denoise: bool) {
+        self.set_mode_denoise(mode_vad, denoise);
+        self.set_vad_threshold(threshold);
     }
 
     /// 设置热生效：丢弃当前流并用新参数立即重建（不重连服务器）。
@@ -214,7 +247,8 @@ impl AudioManager {
         let handler = Arc::new(StdMutex::new(AudioHandler::new()));
         let params = self.voice_params();
         let input = open_capture(
-            &params,
+            params.input_device.as_deref(),
+            self.controls.clone(),
             send_tx,
             self.transmit.clone(),
             self.vad_active.clone(),
@@ -349,7 +383,8 @@ fn find_output_device(name: Option<&str>) -> Result<Device, String> {
 ///   250ms 再补静音尾包。挂起期照常出帧。
 #[allow(clippy::too_many_arguments)]
 fn open_capture(
-    params: &VoiceParams,
+    input_device: Option<&str>,
+    controls: VoiceControls,
     send_tx: mpsc::Sender<OutPacket>,
     transmit: Arc<AtomicBool>,
     vad_active: Arc<AtomicBool>,
@@ -357,7 +392,7 @@ fn open_capture(
     mic_level: Arc<AtomicU32>,
     event_tx: UnboundedSender<AudioEvent>,
 ) -> Result<Stream, String> {
-    let device = find_input_device(params.input_device.as_deref())?;
+    let device = find_input_device(input_device)?;
     let device_name = device
         .description()
         .map(|d| d.name().to_string())
@@ -384,18 +419,16 @@ fn open_capture(
     let mut frame_fill = 0usize;
     // VAD 门控状态机：概率≥阈值 → 开并刷新挂起计数；概率<阈值 → 挂起递减，
     // 归零关门并补静音尾包。挂起期照常出帧（不靠少发帧表达挂起）。
-    let mode_is_vad = params.mode == "vad";
-    let threshold = params.vad_threshold.clamp(0.1, 0.9);
+    // 模式/阈值/降噪每帧从原子量读取：设置页拖动滑条即时生效，无需重建流。
     let hangover_frames = (VAD_HANGOVER_MS / 10).max(1) as usize;
     let mut vad_gate = false;
     let mut hangover = 0usize;
-    let denoise_enabled = params.denoise;
 
     info!(
         device = %device_name,
-        mode = %params.mode,
-        threshold = %threshold,
-        denoise = params.denoise,
+        mode = if controls.mode_vad.load(Ordering::Relaxed) { "vad" } else { "ptt" },
+        threshold = %format!("{:.2}", f32::from_bits(controls.vad_threshold.load(Ordering::Relaxed))),
+        denoise = controls.denoise_on.load(Ordering::Relaxed),
         "采集设备已打开：48kHz 单声道，20ms 帧，降噪推理常开"
     );
 
@@ -407,6 +440,10 @@ fn open_capture(
                 let rms = rms_of(data);
                 mic_level.store(rms.to_bits(), Ordering::Relaxed);
                 let ptt_held = transmit.load(Ordering::Relaxed);
+                let vad_mode = controls.mode_vad.load(Ordering::Relaxed);
+                let threshold =
+                    f32::from_bits(controls.vad_threshold.load(Ordering::Relaxed)).clamp(0.1, 0.9);
+                let denoise_enabled = controls.denoise_on.load(Ordering::Relaxed);
                 for &s in data {
                     // ---- 聚满 480 样本 → 降噪推理（始终运行，B2） ----
                     in_buf[in_fill] = s;
@@ -431,7 +468,7 @@ fn open_capture(
                     }
                     // ---- VAD 门控（仅 VAD 模式驱动发送；概率恒更新） ----
                     let send;
-                    if mode_is_vad {
+                    if vad_mode {
                         if prob >= threshold {
                             vad_gate = true;
                             hangover = hangover_frames;

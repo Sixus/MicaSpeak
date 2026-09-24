@@ -317,12 +317,11 @@ async fn connection_loop(
         let config = state.config.lock().await;
         let v = &config.voice;
         state.audio.set_voice_params(crate::audio::VoiceParams {
-            mode: v.mode.clone(),
-            vad_threshold: v.vad_threshold,
-            denoise: v.denoise,
             input_device: v.input_device.clone(),
             output_device: v.output_device.clone(),
         });
+        // 模式/阈值/降噪是原子量：连接时从配置同步一次，之后由设置命令即时改。
+        state.audio.sync_vad_controls(v.mode == "vad", v.vad_threshold, v.denoise);
     }
 
     // 事件驱动任务：独占轮询事件流，负责发布状态与错误。

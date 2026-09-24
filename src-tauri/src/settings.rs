@@ -65,7 +65,7 @@ pub async fn set_voice_mode(
             return Err("无效的语音模式，只支持 ptt 或 vad".into());
         }
     }
-    {
+    let (mode_vad, denoise_now) = {
         let mut config = state.config.lock().await;
         if let Some(m) = mode {
             config.voice.mode = m;
@@ -74,11 +74,11 @@ pub async fn set_voice_mode(
             config.voice.denoise = d;
         }
         save_config(&config).map_err(|e| format!("保存配置失败：{e}"))?;
-    }
-    let params = state.voice_params_from_config().await;
-    state.audio.set_voice_params(params);
-    state.audio.rebuild();
-    info!("语音设置已更新并热生效");
+        (config.voice.mode == "vad", config.voice.denoise)
+    };
+    // 模式/降噪是原子量：即时生效，无需重建音频流。
+    state.audio.set_mode_denoise(mode_vad, denoise_now);
+    info!("语音设置已即时生效");
     state.emit_snapshot(&app).await;
     Ok(())
 }
@@ -98,9 +98,8 @@ pub async fn set_vad_threshold(
         config.voice.vad_threshold = value;
         save_config(&config).map_err(|e| format!("保存配置失败：{e}"))?;
     }
-    let params = state.voice_params_from_config().await;
-    state.audio.set_voice_params(params);
-    state.audio.rebuild();
+    // 阈值是原子量：拖动滑条即时生效，无需重建音频流。
+    state.audio.set_vad_threshold(value);
     state.emit_snapshot(&app).await;
     Ok(())
 }
@@ -145,8 +144,9 @@ pub async fn set_audio_devices(
         config.voice.output_device = output;
         save_config(&config).map_err(|e| format!("保存配置失败：{e}"))?;
     }
-    let params = state.voice_params_from_config().await;
+    let params = state.audio_devices_from_config().await;
     state.audio.set_voice_params(params);
+    // 只有设备变更需要重建流；模式/阈值/降噪走原子量即时生效。
     state.audio.rebuild();
     state.emit_snapshot(&app).await;
     Ok(())

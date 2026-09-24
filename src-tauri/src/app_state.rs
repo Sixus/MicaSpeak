@@ -231,14 +231,12 @@ impl AppState {
             .collect()
     }
 
-    /// 从当前配置构造音频参数快照（设置命令在释放 config 锁后调用）。
-    pub async fn voice_params_from_config(&self) -> crate::audio::VoiceParams {
+    /// 从当前配置构造设备参数（设置命令在释放 config 锁后调用）。
+    /// 模式/阈值/降噪走原子量即时生效，不经此路径。
+    pub async fn audio_devices_from_config(&self) -> crate::audio::VoiceParams {
         let config = self.config.lock().await;
         let v = &config.voice;
         crate::audio::VoiceParams {
-            mode: v.mode.clone(),
-            vad_threshold: v.vad_threshold,
-            denoise: v.denoise,
             input_device: v.input_device.clone(),
             output_device: v.output_device.clone(),
         }
