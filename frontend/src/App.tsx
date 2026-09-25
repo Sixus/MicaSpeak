@@ -597,13 +597,20 @@ function ConnectForm({ snapshot, onConnect, onConnectBookmark, onSave, onDelete 
     catch (err) { setError(String(err).replace(/^Error:\s*/, '')) }
     finally { setBusy(false) }
   }
+  // M5d：统一回车行为——连接页任意输入框回车即连接（与聊天/密码弹窗一致）。
+  const onEnterConnect = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !busy && !connecting && address && nickname) {
+      e.preventDefault()
+      void submit(false)
+    }
+  }
   return (
     <section className="connect-page">
       <div className="brand-lockup"><div className="brand-mark">M</div><div><strong>MicaSpeak</strong><span>TS3 语音客户端</span></div></div>
       <div className="form-card">
-        <label>服务器地址<input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="主机:9987" /></label>
-        <label>昵称<input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="你的昵称" /></label>
-        <label>服务器密码 <span className="optional">可选</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+        <label>服务器地址<input value={address} onChange={(e) => setAddress(e.target.value)} onKeyDown={onEnterConnect} placeholder="主机:9987" /></label>
+        <label>昵称<input value={nickname} onChange={(e) => setNickname(e.target.value)} onKeyDown={onEnterConnect} placeholder="你的昵称" /></label>
+        <label>服务器密码 <span className="optional">可选</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={onEnterConnect} /></label>
         {(error || connectReason) && <div className="error-line">{error || connectReason}</div>}
         <button className="primary-button" disabled={busy || connecting || !address || !nickname} onClick={() => void submit(false)}>{busy || connecting ? '正在连接…' : '连接服务器'}</button>
         <button className="link-button" disabled={busy || connecting} onClick={() => void submit(true)}>保存为书签</button>
