@@ -10,3 +10,6 @@ tsproto-packets = { path = "src-tauri/vendor/tsproto-packets" }
 [profile.release]
 strip = true
 lto = true
+# M5c C3 体积（应用目录 ≤20MB）：单 codegen unit + panic abort 缩减发行 exe。
+codegen-units = 1
+panic = "abort"
