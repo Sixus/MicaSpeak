@@ -106,7 +106,7 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 init_state.emit_initial(&init_handle).await;
             });
-            tauri::async_runtime::spawn(audio::health_task(state));
+            tauri::async_runtime::spawn(audio::health_task(handle.clone(), state));
             Ok(())
         })
         .run(tauri::generate_context!())

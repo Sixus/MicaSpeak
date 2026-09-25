@@ -15,7 +15,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream, StreamConfig};
 use nnnoiseless::DenoiseState;
 use serde_json::json;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -127,6 +127,10 @@ pub struct AudioManager {
     /// 回调线程 → 事件任务。
     event_tx: UnboundedSender<AudioEvent>,
     event_rx: StdMutex<Option<UnboundedReceiver<AudioEvent>>>,
+    /// M5d：连续打开失败次数（成功清零）与失败侧（bit0=输入 bit1=输出）。
+    /// 指定设备反复打不开时由健康任务回退系统默认并广播 audio://device-error。
+    pub open_failures: Arc<AtomicU32>,
+    pub open_fail_side: Arc<AtomicU8>,
 }
 
 // 手写 Clone：event_rx 是一次性接收端，不随克隆复制。
@@ -147,6 +151,8 @@ impl Clone for AudioManager {
             send_tx: self.send_tx.clone(),
             event_tx: self.event_tx.clone(),
             event_rx: StdMutex::new(None),
+            open_failures: self.open_failures.clone(),
+            open_fail_side: self.open_fail_side.clone(),
         }
     }
 }
@@ -172,6 +178,8 @@ impl AudioManager {
             streams: Arc::new(StdMutex::new(None)),
             send_tx: Arc::new(StdMutex::new(None)),
             event_tx,
+            open_failures: Arc::new(AtomicU32::new(0)),
+            open_fail_side: Arc::new(AtomicU8::new(0)),
             event_rx: StdMutex::new(Some(event_rx)),
         }
     }
@@ -265,10 +273,24 @@ impl AudioManager {
         match (input, output) {
             (Ok(input), Ok(output)) => {
                 *streams = Some(AudioStreams { conn_id, handler, _input: input, _output: output });
+                self.open_failures.store(0, Ordering::Relaxed);
+                self.open_fail_side.store(0, Ordering::Relaxed);
                 info!("音频收发流已创建");
             }
-            (Err(e), _) | (Ok(_), Err(e)) => {
-                error!("创建音频流失败（等待自动重试）：{e}");
+            (Err(e), Err(e2)) => {
+                error!("创建音频流失败（输入：{e}）（输出：{e2}）（等待自动重试）");
+                self.open_fail_side.store(3, Ordering::Relaxed);
+                self.open_failures.fetch_add(1, Ordering::Relaxed);
+            }
+            (Err(e), Ok(_)) => {
+                error!("创建音频流失败（{e}）（等待自动重试）");
+                self.open_fail_side.store(1, Ordering::Relaxed);
+                self.open_failures.fetch_add(1, Ordering::Relaxed);
+            }
+            (Ok(_), Err(e)) => {
+                error!("创建音频流失败（{e}）（等待自动重试）");
+                self.open_fail_side.store(2, Ordering::Relaxed);
+                self.open_failures.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -677,13 +699,52 @@ pub async fn level_task(app: AppHandle, state: crate::app_state::AppState) {
 }
 
 /// 健康任务：连接期间若流缺失（设备错误/初始失败），每 2s 用系统默认设备重建。
-pub async fn health_task(state: crate::app_state::AppState) {
+/// 健康任务：确保流存在；M5d——指定设备连续 3 次打不开时清掉该侧选择，
+/// 回退系统默认并广播 audio://device-error（拔出/失效设备的收尾兜底，
+/// 与 M3 的"运行中设备错误回调"互补：本路径覆盖"打开阶段就失败"的情况）。
+pub async fn health_task(app: AppHandle, state: crate::app_state::AppState) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
     loop {
         interval.tick().await;
         let conn = state.audio.active_conn();
         if conn != 0 {
             state.audio.ensure_started(conn);
+        }
+        if state.audio.open_failures.load(Ordering::Relaxed) >= 3 {
+            let side = state.audio.open_fail_side.load(Ordering::Relaxed);
+            let mut messages: Vec<String> = Vec::new();
+            {
+                let mut config = state.config.lock().await;
+                let mut changed = false;
+                if side & 1 != 0 {
+                    if let Some(name) = config.voice.input_device.take() {
+                        messages.push(format!("音频输入设备「{name}」连续无法打开，已回退到系统默认设备"));
+                        changed = true;
+                    }
+                }
+                if side & 2 != 0 {
+                    if let Some(name) = config.voice.output_device.take() {
+                        messages.push(format!("音频输出设备「{name}」连续无法打开，已回退到系统默认设备"));
+                        changed = true;
+                    }
+                }
+                if changed {
+                    if let Err(e) = crate::persistence::save_config(&config) {
+                        error!("回退默认设备时保存配置失败：{e}");
+                    }
+                }
+            }
+            state.audio.open_failures.store(0, Ordering::Relaxed);
+            state.audio.open_fail_side.store(0, Ordering::Relaxed);
+            if !messages.is_empty() {
+                let params = state.audio_devices_from_config().await;
+                state.audio.set_voice_params(params);
+                let _ = app.emit(
+                    "audio://device-error",
+                    json!({ "message": messages.join("；") }),
+                );
+                state.emit_snapshot(&app).await;
+            }
         }
     }
 }
