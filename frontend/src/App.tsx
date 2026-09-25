@@ -257,6 +257,17 @@ function SettingsPage({ snapshot, started, levels }: { snapshot: AppSnapshot; st
         </div>
       </section>
 
+      <section className="settings-card">
+        <div className="section-label">外观</div>
+        <div className="setting-row">
+          <span className="setting-label">窗口材质</span>
+          <span className="material-value">{snapshot.material ?? '实体'}</span>
+        </div>
+        <div className="setting-hint">
+          Windows 11 上使用 Mica 系统材质；不支持或启用失败时自动回退实体背景。启动参数 --force-fallback 可强制实体。
+        </div>
+      </section>
+
       {notice && <div className="notice">{notice}</div>}
     </main>
   )
@@ -717,6 +728,11 @@ function AppShell() {
   const isSettingsWindow = useMemo(() => {
     try { return getCurrentWebviewWindow().label === 'settings' } catch { return false }
   }, [])
+
+  // M5a：材质模式落成 data 属性，CSS 据此切换半透明（Mica）/不透明（实体）背景。
+  useEffect(() => {
+    document.documentElement.dataset.material = snapshot.material === 'Mica' ? 'mica' : 'solid'
+  }, [snapshot.material])
 
   useEffect(() => {
     let active = true

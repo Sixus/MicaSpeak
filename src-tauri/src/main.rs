@@ -5,6 +5,8 @@ mod audio;
 mod chat;
 mod conn;
 mod hotkey;
+mod logging;
+mod material;
 mod overlay;
 mod persistence;
 mod settings;
@@ -15,57 +17,9 @@ use persistence::{delete_bookmark, save_bookmark};
 use settings::{list_audio_devices, open_settings, set_audio_devices, set_ptt_key, set_vad_threshold, set_voice_mode};
 use tauri::Manager;
 
-/// 极简 stderr 日志：设置 MICASPEAK_LOG=debug/trace 时启用，
-/// 用于查看 tsclientlib/tsproto 的协议级诊断（不含密码与私钥）。
-struct StderrLogger(log::LevelFilter);
-
-impl log::Log for StderrLogger {
-    fn enabled(&self, meta: &log::Metadata) -> bool {
-        meta.level() <= self.0
-    }
-    fn log(&self, record: &log::Record) {
-        eprintln!("[{:>5}] {}", record.level(), record.args());
-    }
-    fn flush(&self) {}
-}
-
-fn init_logging() {
-    let Ok(level) = std::env::var("MICASPEAK_LOG") else {
-        return;
-    };
-    let (tmax, lmax) = match level.to_ascii_lowercase().as_str() {
-        "trace" => (
-            tracing_subscriber::filter::LevelFilter::TRACE,
-            log::LevelFilter::Trace,
-        ),
-        "debug" => (
-            tracing_subscriber::filter::LevelFilter::DEBUG,
-            log::LevelFilter::Debug,
-        ),
-        "info" => (
-            tracing_subscriber::filter::LevelFilter::INFO,
-            log::LevelFilter::Info,
-        ),
-        "warn" => (
-            tracing_subscriber::filter::LevelFilter::WARN,
-            log::LevelFilter::Warn,
-        ),
-        _ => (
-            tracing_subscriber::filter::LevelFilter::ERROR,
-            log::LevelFilter::Error,
-        ),
-    };
-    // tsclientlib/tsproto 走 tracing，tauri 走 log crate；两套都接上。
-    tracing_subscriber::fmt()
-        .with_max_level(tmax)
-        .with_writer(std::io::stderr)
-        .init();
-    let _ = log::set_boxed_logger(Box::new(StderrLogger(lmax)));
-    log::set_max_level(lmax);
-}
-
 fn main() {
-    init_logging();
+    // M5a：文件+stderr 双写日志先行（冷启动打点、重连退避等验收证据依赖它）。
+    logging::init();
     tauri::Builder::default()
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
@@ -95,6 +49,10 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             let state = app.state::<AppState>().inner().clone();
+            // M5a：主窗口材质（Mica/实体回退）+ 系统深浅跟随。
+            if let Err(e) = material::init_main_window_material(&state.material, &handle) {
+                log::warn!("窗口材质初始化失败：{e}");
+            }
             // M3 A：全局 PTT 低级键盘钩子。目标键取自配置，钩子线程常驻消息泵。
             let vk = persistence::load_config()
                 .map(|(config, _)| config.voice.ptt_key_vk)

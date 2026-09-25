@@ -68,6 +68,8 @@ pub struct AppSnapshot {
     pub own_channel_id: u64,
     pub chat: Vec<crate::chat::ChatTabView>,
     pub overlay_enabled: bool,
+    /// M5a 窗口材质："Mica" / "实体（回退：…）" / "实体（--force-fallback）"。
+    pub material: String,
 }
 
 pub enum ConnCommand {
@@ -146,6 +148,8 @@ pub async fn get_app_snapshot(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppSnapshot, String> {
+    // M5c 冷启动指标：前端拿到首屏数据 = 可交互起点（只记一次）。
+    crate::logging::log_first_frame_ready();
     let snap = state.snapshot().await;
     if let Some(message) = state.take_pending_error().await {
         let _ = app.emit("error://user", serde_json::json!({ "message": message }));

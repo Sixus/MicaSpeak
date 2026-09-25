@@ -7,3 +7,5 @@ src-tauri/gen/
 # 测试截图证据与 pnpm 缓存不入库（历史决策：截图勿提交）
 gui-test-screenshots/
 .pnpm-store/
+.cu-test/
+logs/desktop.png

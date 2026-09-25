@@ -27,6 +27,9 @@ audiopus = "0.3.0-rc.0"
 cpal = "0.18"
 # M3 B：降噪与 VAD（任务卡白名单依赖，锁小版本）。
 nnnoiseless = "0.5.2"
+# M5 A：Win11 Mica 材质（docs/02 §2 选型：window-vibrancy + Windows API）。
+# apply_mica 失败/Win10/--force-fallback 时回退实体背景。
+window-vibrancy = "0.8"
 
 # M3：WH_KEYBOARD_LL 低级键盘钩子。复用 Cargo.lock 已有的 0.61.3，
 # 只开任务卡白名单的三个 feature（docs/07 提示词）。

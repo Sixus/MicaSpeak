@@ -56,6 +56,8 @@ pub struct AppState {
     pub chat: ChatStore,
     /// M4c 悬浮窗会话事实（开关持久化在 config，编辑/可见是瞬态）。
     pub overlay: crate::overlay::OverlayState,
+    /// M5a 窗口材质事实（Mica/实体回退），进程内一次决策。
+    pub material: crate::material::MaterialManager,
     /// 说话人状态：client_id -> 条目（标准互斥锁：会被音频事件任务同步访问）。
     talking: Arc<StdMutex<HashMap<u64, TalkerEntry>>>,
     /// 自己的 client id（publish_state 更新；0 = 未知）。
@@ -82,6 +84,7 @@ impl AppState {
             audio: AudioManager::new(),
             chat: ChatStore::new(),
             overlay: crate::overlay::OverlayState::default(),
+            material: crate::material::MaterialManager::default(),
             talking: Arc::new(StdMutex::new(HashMap::new())),
             own_client: Arc::new(AtomicU64::new(0)),
             self_nickname: Arc::new(StdMutex::new("我".to_string())),
@@ -119,6 +122,7 @@ impl AppState {
             let config = self.config.lock().await;
             config.overlay.enabled
         };
+        let material = self.material.get();
         AppSnapshot {
             connection,
             channels,
@@ -130,6 +134,7 @@ impl AppState {
             own_channel_id,
             chat,
             overlay_enabled,
+            material: material.to_string(),
         }
     }
 

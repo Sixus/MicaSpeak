@@ -84,6 +84,8 @@ export type AppSnapshot = {
   overlay_enabled: boolean
   own_channel_id: number
   chat: ChatTabView[]
+  /** M5a：'Mica' 或 '实体（回退…）'；旧后端缺省 undefined */
+  material?: string
 }
 
 export const emptySnapshot: AppSnapshot = {
