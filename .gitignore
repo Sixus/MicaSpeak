@@ -9,3 +9,4 @@ gui-test-screenshots/
 .pnpm-store/
 .cu-test/
 logs/desktop.png
+dist/

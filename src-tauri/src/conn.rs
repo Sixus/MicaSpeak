@@ -105,33 +105,12 @@ pub struct WebView2Info {
     pub source: Option<String>,
 }
 
-fn probe_hive(key: &str) -> Option<String> {
-    let output = std::process::Command::new("reg")
-        .args(["query", key, "/s", "/v", "pv"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    // 形如 "    pv    REG_SZ    140.0.3315.0"；多渠道并存时取版本号最高的。
-    let mut best: Option<(Vec<u32>, String)> = None;
-    for line in text.lines() {
-        let Some(idx) = line.find("REG_SZ") else { continue };
-        let v = line[idx + "REG_SZ".len()..].trim();
-        if v.is_empty() || !v.contains('.') {
-            continue;
-        }
-        let parts: Vec<u32> = v.split('.').filter_map(|p| p.parse().ok()).collect();
-        if parts.len() < 3 {
-            continue;
-        }
-        if best.as_ref().map(|(b, _)| &parts > b).unwrap_or(true) {
-            best = Some((parts, v.to_string()));
-        }
-    }
-    best.map(|(_, v)| v)
+fn probe_hive(root: windows::Win32::System::Registry::HKEY, full_key: &str) -> Option<String> {
+    crate::registry::read_string(root, full_key, "pv")
 }
+
+/// Evergreen Runtime 的安装项 GUID（微软官方检测路径，docs R2）。
+const WEBVIEW2_EVERGREEN_GUID: &str = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
 
 pub fn webview2_probe() -> WebView2Info {
     if std::env::var_os("MICASPEAK_FORCE_WEBVIEW2_MISSING").is_some() {
@@ -139,12 +118,24 @@ pub fn webview2_probe() -> WebView2Info {
     }
     #[cfg(windows)]
     {
-        // Evergreen Runtime 的安装项：系统级（WOW6432Node）与当前用户两个位置。
-        for (source, key) in [
-            ("HKLM（系统级）", r"HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients"),
-            ("HKCU（当前用户）", r"HKCU\Software\Microsoft\EdgeUpdate\Clients"),
+        use windows::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+        // 直查固定 GUID 子键（不递归、零进程派生）：EdgeUpdate\Clients 树很大，
+        // reg.exe /s 实测 6 秒；GUI 进程派生 reg.exe 在云桌面上又叠加控制台
+        // 创建开销（每次 3-6 秒）——全部走 RegGetValueW 直读（M5c 指标修正）。
+        for (source, root, key) in [
+            (
+                "HKLM（系统级）",
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients",
+            ),
+            (
+                "HKCU（当前用户）",
+                HKEY_CURRENT_USER,
+                r"Software\Microsoft\EdgeUpdate\Clients",
+            ),
         ] {
-            if let Some(version) = probe_hive(key) {
+            let full = format!("{key}\\{WEBVIEW2_EVERGREEN_GUID}");
+            if let Some(version) = probe_hive(root, &full) {
                 return WebView2Info {
                     available: true,
                     version: Some(version),

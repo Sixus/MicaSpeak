@@ -73,9 +73,6 @@ pub async fn overlay_task(app: AppHandle, state: AppState) {
     let mut last_signature = String::new();
     loop {
         tokio::time::sleep(Duration::from_millis(150)).await;
-        let Some(win) = app.get_webview_window("overlay") else {
-            continue;
-        };
         let enabled = {
             let config = state.config.lock().await;
             config.overlay.enabled
@@ -84,6 +81,19 @@ pub async fn overlay_task(app: AppHandle, state: AppState) {
         let talkers = state.talking_list();
         // 编辑模式强制显示（否则无人说话时隐藏）。
         let visible = enabled && (editing || !talkers.is_empty());
+        // M5c：窗口按需创建——需要显示（或上轮会话开着）而窗口不存在时补建。
+        if app.get_webview_window("overlay").is_none() {
+            if enabled || editing {
+                if let Err(e) = ensure_overlay_window(&app, &state).await {
+                    log::warn!("悬浮窗创建失败：{e}");
+                }
+            } else {
+                continue;
+            }
+        }
+        let Some(win) = app.get_webview_window("overlay") else {
+            continue;
+        };
 
         let names: Vec<String> = talkers
             .iter()

@@ -9,6 +9,7 @@ mod logging;
 mod material;
 mod overlay;
 mod persistence;
+mod registry;
 mod settings;
 mod tray;
 
@@ -85,15 +86,9 @@ fn main() {
             hotkey::set_target_vk(vk);
             hotkey::spawn_hook_thread();
             tauri::async_runtime::spawn(hotkey::watch_task(state.audio.clone()));
-            // M4c：悬浮窗——启动即创建（隐藏），显隐任务按 TalkingState 驱动。
-            {
-                let (o_handle, o_state) = (handle.clone(), state.clone());
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = overlay::ensure_overlay_window(&o_handle, &o_state).await {
-                        log::warn!("悬浮窗创建失败：{e}");
-                    }
-                });
-            }
+            // M4c：悬浮窗——按需创建（首次开启/编辑时 ensure_overlay_window）。
+            // M5c C4 内存优化：默认关闭时不再常驻一个隐藏 renderer（实测省
+            // ~30-45MB 专用内存），显隐任务对窗口缺失有容忍（循环等待）。
             let (ov_handle, ov_state) = (handle.clone(), state.clone());
             tauri::async_runtime::spawn(overlay::overlay_task(ov_handle, ov_state));
             // M2 音频事件任务：转发/限频推送/健康重建（任务必须被 Tokio 实际轮询，

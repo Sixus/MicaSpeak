@@ -63,29 +63,16 @@ pub fn force_fallback_requested() -> bool {
     std::env::args().any(|a| a == "--force-fallback")
 }
 
-/// Windows 版本号（build），查询失败返回 None（视作不支持 Mica）。
+/// Windows 版本号（build），注册表直读；读取失败返回 None（视作不支持 Mica）。
 #[cfg(windows)]
 pub fn windows_build() -> Option<u32> {
-    let output = std::process::Command::new("reg")
-        .args([
-            "query",
-            r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
-            "/v",
-            "CurrentBuildNumber",
-        ])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    for line in text.lines() {
-        if let Some(idx) = line.find("CurrentBuildNumber") {
-            let rest = &line[idx + "CurrentBuildNumber".len()..];
-            let build: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
-            if let Ok(n) = build.parse::<u32>() {
-                return Some(n);
-            }
-        }
-    }
-    None
+    use windows::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    let v = crate::registry::read_string(
+        HKEY_LOCAL_MACHINE,
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        "CurrentBuildNumber",
+    )?;
+    v.trim().parse::<u32>().ok()
 }
 
 #[cfg(not(windows))]
