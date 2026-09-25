@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import {
   subscribeChatMessage,
+  subscribeDeviceError,
   subscribeLevel,
   subscribeOverlayState,
   subscribeRuntimeMissing,
@@ -776,6 +777,12 @@ function AppShell() {
           if (!active) return
           if (promptRef.current) setPwdError(message)
           else { setNotice(message); setTimeout(() => setNotice(''), 4000) }
+        }))
+        // M5 D1：设备错误/回退提示（事件由 Rust 音频事件任务广播）。
+        offs.push(await subscribeDeviceError((message) => {
+          if (!active) return
+          setNotice(message)
+          setTimeout(() => setNotice(''), 5000)
         }))
         offs.push(await subscribeTalking((p) => {
           if (!active) return

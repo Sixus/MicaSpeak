@@ -17,6 +17,11 @@ export async function subscribeRuntimeMissing(onMissing: () => void): Promise<Un
   return listen('runtime://webview2-missing', onMissing)
 }
 
+// M5 D1：设备错误与回退提示（拔出设备时 Rust 回退系统默认并广播）。
+export async function subscribeDeviceError(onError: (message: string) => void): Promise<UnlistenFn> {
+  return listen<{ message: string }>('audio://device-error', (event) => onError(event.payload.message))
+}
+
 export async function subscribeUserError(onError: (message: string) => void): Promise<UnlistenFn> {
   return listen<{ message: string }>('error://user', (event) => onError(event.payload.message))
 }

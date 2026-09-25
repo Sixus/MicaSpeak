@@ -19,8 +19,7 @@
         "minWidth": 360,
         "minHeight": 520,
         "resizable": true,
-        "transparent": true,
-        "dataDirectory": "Data/WebView2"
+        "transparent": true
       }
     ],
     "security": { "csp": null }
@@ -28,6 +27,6 @@
   "bundle": {
     "active": false,
     "targets": "all",
-    "icon": []
+    "icon": ["icons/icon.ico"]
   }
 }

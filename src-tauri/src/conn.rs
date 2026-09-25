@@ -3,7 +3,10 @@ use crate::audio::{send_task, SEND_QUEUE};
 use crate::persistence::load_identity;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::{mpsc, oneshot};
 use tsclientlib::prelude::*;
@@ -12,7 +15,7 @@ use tsclientlib::{
     Connection, DisconnectOptions, Error as TslError, Identity, TemporaryDisconnectReason, TsError,
 };
 use tsproto_packets::packets::AudioData;
-use tracing::debug;
+use tracing::{debug, info, warn};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionPayload {
@@ -70,6 +73,8 @@ pub struct AppSnapshot {
     pub overlay_enabled: bool,
     /// M5a 窗口材质："Mica" / "实体（回退：…）" / "实体（--force-fallback）"。
     pub material: String,
+    /// M5c Evergreen WebView2 版本（缺省 None；向后兼容新字段）。
+    pub webview2_version: Option<String>,
 }
 
 pub enum ConnCommand {
@@ -90,31 +95,68 @@ pub enum ConnCommand {
     Shutdown,
 }
 
-pub fn webview2_available() -> bool {
+/// Evergreen WebView2 Runtime 探测结果（M5c：缺失时给出前置条件页并记录
+/// 版本/安装来源；不得把缺失 Runtime 误报为连接错误）。
+#[derive(Clone, Debug)]
+pub struct WebView2Info {
+    pub available: bool,
+    pub version: Option<String>,
+    /// "HKLM（系统级）" | "HKCU（当前用户）"
+    pub source: Option<String>,
+}
+
+fn probe_hive(key: &str) -> Option<String> {
+    let output = std::process::Command::new("reg")
+        .args(["query", key, "/s", "/v", "pv"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    // 形如 "    pv    REG_SZ    140.0.3315.0"；多渠道并存时取版本号最高的。
+    let mut best: Option<(Vec<u32>, String)> = None;
+    for line in text.lines() {
+        let Some(idx) = line.find("REG_SZ") else { continue };
+        let v = line[idx + "REG_SZ".len()..].trim();
+        if v.is_empty() || !v.contains('.') {
+            continue;
+        }
+        let parts: Vec<u32> = v.split('.').filter_map(|p| p.parse().ok()).collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        if best.as_ref().map(|(b, _)| &parts > b).unwrap_or(true) {
+            best = Some((parts, v.to_string()));
+        }
+    }
+    best.map(|(_, v)| v)
+}
+
+pub fn webview2_probe() -> WebView2Info {
     if std::env::var_os("MICASPEAK_FORCE_WEBVIEW2_MISSING").is_some() {
-        return false;
+        return WebView2Info { available: false, version: None, source: None };
     }
     #[cfg(windows)]
     {
-        for key in [
-            "HKCU\\Software\\Microsoft\\EdgeUpdate\\Clients",
-            "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients",
+        // Evergreen Runtime 的安装项：系统级（WOW6432Node）与当前用户两个位置。
+        for (source, key) in [
+            ("HKLM（系统级）", r"HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients"),
+            ("HKCU（当前用户）", r"HKCU\Software\Microsoft\EdgeUpdate\Clients"),
         ] {
-            let output = std::process::Command::new("reg")
-                .args(["query", key, "/s", "/f", "pv"])
-                .output();
-            if output
-                .map(|o| o.status.success() && !o.stdout.is_empty())
-                .unwrap_or(false)
-            {
-                return true;
+            if let Some(version) = probe_hive(key) {
+                return WebView2Info {
+                    available: true,
+                    version: Some(version),
+                    source: Some(source.into()),
+                };
             }
         }
-        false
+        WebView2Info { available: false, version: None, source: None }
     }
     #[cfg(not(windows))]
     {
-        true
+        WebView2Info { available: true, version: None, source: None }
     }
 }
 
@@ -166,17 +208,42 @@ pub async fn connect(
     password: Option<String>,
     bookmark_id: Option<String>,
 ) -> Result<(), String> {
-    disconnect_inner(&state).await;
+    // 用户主动连接：epoch+1 取消任何挂起的自动重连（B2 手动优先）。
+    state.reconnect_epoch.fetch_add(1, Ordering::Relaxed);
+    let shared = state.inner().clone();
+    connect_inner(&app, &shared, ActiveConnection {
+        address,
+        nickname,
+        password: password.filter(|p| !p.is_empty()),
+        bookmark_id,
+    }, None)
+    .await
+}
+
+/// 连接入口（connect 命令与自动重连共用）。`rejoin_override` 非空时直接作为
+/// 连上后的自动进频道目标（自动重连用它恢复断开前的频道；书签路径自带）。
+async fn connect_inner(
+    app: &AppHandle,
+    state: &AppState,
+    active: ActiveConnection,
+    rejoin_override: Option<String>,
+) -> Result<(), String> {
+    let ActiveConnection { address, nickname, password, bookmark_id } = active;
+    // 新连接任务必须清理旧任务（docs/09 B2）：旧 owner 收到 Shutdown，
+    // 音频流/说话状态/频道树全部复位。
+    disconnect_inner(state).await;
     let identity = load_identity().map_err(|e| format!("身份文件无法读取：{e}"))?;
     let mut password = password.filter(|p| !p.is_empty());
-    let mut auto_join = None;
-    if let Some(id) = bookmark_id.as_deref() {
-        let cfg = state.config.lock().await.clone();
-        if let Some(bookmark) = cfg.bookmarks.iter().find(|b| b.id == id) {
-            if password.is_none() {
-                password = bookmark.password.clone().filter(|p| !p.is_empty());
+    let mut auto_join = rejoin_override;
+    if auto_join.is_none() {
+        if let Some(id) = bookmark_id.as_deref() {
+            let cfg = state.config.lock().await.clone();
+            if let Some(bookmark) = cfg.bookmarks.iter().find(|b| b.id == id) {
+                if password.is_none() {
+                    password = bookmark.password.clone().filter(|p| !p.is_empty());
+                }
+                auto_join = bookmark.last_channel.clone();
             }
-            auto_join = bookmark.last_channel.clone();
         }
     }
     debug!(?bookmark_id, ?auto_join, "connect: bookmark resolved");
@@ -195,13 +262,16 @@ pub async fn connect(
     }
     let _ = app.emit("connection://state", state.connection.lock().await.clone());
     // 立刻推送快照，让前端马上进入“连接中”状态（否则真实连接过程 UI 无反馈）
-    state.emit_snapshot(&app).await;
+    state.emit_snapshot(app).await;
     let id = state.next_conn_id.fetch_add(1, Ordering::Relaxed) + 1;
     let (tx, rx) = mpsc::channel(8);
     *state.conn_tx.lock().await = Some(ConnOwner { id, tx });
-    let shared = state.inner().clone();
-    tauri::async_runtime::spawn(connection_loop(
-        app,
+    let shared = state.clone();
+    let app2 = app.clone();
+    // dyn 擦除：打断 connect_inner→connection_loop→driver_loop→arm_reconnect→
+    // connect_inner 的 future 类型级循环（E0391，Box::pin 不足以擦除类型）。
+    tauri::async_runtime::spawn(Box::pin(connection_loop(
+        app2,
         shared,
         rx,
         id,
@@ -210,12 +280,15 @@ pub async fn connect(
         password,
         identity,
         auto_join,
-    ));
+    )) as Pin<Box<dyn Future<Output = ()> + Send>>);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn disconnect(state: State<'_, AppState>) -> Result<(), String> {
+    // 用户主动断开：epoch+1 取消挂起的自动重连（B2：手动断开不重连）。
+    state.reconnect_epoch.fetch_add(1, Ordering::Relaxed);
+    info!("用户手动断开连接");
     disconnect_inner(&state).await;
     Ok(())
 }
@@ -411,6 +484,11 @@ async fn connection_loop(
 }
 
 /// 独占轮询事件流：转发状态/错误事件，并在首次连上后自动回连上次频道。
+/// 额外职责（M5b B2）：
+/// - 记录自己当前所在频道名 `joined`；库内临时断连自动重建后，`pending_rejoin`
+///   恢复原频道（书签路径之外的覆盖：非书签连接、连接后换过频道的情况）。
+/// - 流意外结束（网络死亡且库内重建失败）时按退避序列发起应用层自动重连；
+///   用户手动操作（epoch 变化）则不重连。
 async fn driver_loop(
     app: AppHandle,
     state: AppState,
@@ -420,6 +498,8 @@ async fn driver_loop(
     mut auto_join: Option<String>,
     id: u64,
 ) {
+    let mut joined: Option<String> = None;
+    let mut pending_rejoin: Option<String> = None;
     while let Some(item) = sync.next().await {
         // 连接已被替换/断开（owner 换人）后不再发布任何状态，
         // 否则会把 disconnect 重置好的界面覆盖成幽灵"已连接"。
@@ -429,6 +509,20 @@ async fn driver_loop(
         match item {
             Ok(SyncStreamItem::BookEvents(events)) => {
                 publish_state(&app, &state, &mut sync, &address, id).await;
+                // 刷新"自己所在频道"（重连恢复与临时断连重进的依据）。
+                let own = state.chat.own_channel();
+                if own != 0 {
+                    if let Some(name) = state
+                        .channels
+                        .lock()
+                        .await
+                        .iter()
+                        .find(|c| c.id == own)
+                        .map(|c| c.name.clone())
+                    {
+                        joined = Some(name);
+                    }
+                }
                 // 文字消息与 book 变更同批到达；先刷新 own_channel 再路由，
                 // 保证消息归入正确频道标签（任务卡 A3）。
                 for event in events {
@@ -436,20 +530,29 @@ async fn driver_loop(
                         handle_incoming_text(&app, &state, target, invoker, message).await;
                     }
                 }
-                // 首次 BookEvents 时频道列表可能尚未就绪：找不到目标就保留
-                // auto_join 等下一次事件重试，找到（含密码频道）才消费掉。
-                if let Some(name) = &auto_join {
+                // 进频道目标：auto_join（书签/重连注入）优先，其次库内临时断连
+                // 重建后的重进。频道列表未就绪时保留目标等下一次事件重试，
+                // 找到（含密码频道）才消费掉。
+                let mut from_auto_join = false;
+                let target = if auto_join.is_some() {
+                    from_auto_join = true;
+                    auto_join.clone()
+                } else {
+                    pending_rejoin.clone()
+                };
+                if let Some(name) = target {
                     let find = state
                         .channels
                         .lock()
                         .await
                         .iter()
-                        .find(|c| c.name == *name)
+                        .find(|c| c.name == name)
                         .map(|c| (c.id, c.password));
-                    debug!(name = %name, ?find, "driver: auto-join target");
+                    debug!(name = %name, ?find, "driver: join target");
                     match find {
                         Some((channel_id, false)) => {
                             auto_join = None;
+                            pending_rejoin = None;
                             if let Some(cmd_tx) = &cmd_tx {
                                 let (result, _) = oneshot::channel();
                                 let _ = cmd_tx
@@ -465,8 +568,15 @@ async fn driver_loop(
                         Some((_, true)) => {
                             // 密码频道没有已存密码，静默跳过（设计内：用户手动输入）
                             auto_join = None;
+                            pending_rejoin = None;
                         }
-                        None => {}
+                        None => {
+                            // 未就绪：auto_join 保留重试语义；pending_rejoin 同样
+                            // 保留（频道树马上会到）。
+                            if from_auto_join {
+                                auto_join = Some(name);
+                            }
+                        }
                     }
                 }
             }
@@ -494,6 +604,11 @@ async fn driver_loop(
                 }
             }
             Ok(SyncStreamItem::DisconnectedTemporarily(reason)) => {
+                // 库内自动重建即将开始；记住当前频道，重建成功后重进。
+                if pending_rejoin.is_none() {
+                    pending_rejoin = joined.clone();
+                }
+                info!(?reason, ?pending_rejoin, "临时断连：库内将自动重建，准备重进原频道");
                 publish_temporary_disconnect(&app, &state, reason, address.clone()).await;
             }
             Ok(_) => {}
@@ -503,8 +618,116 @@ async fn driver_loop(
             }
         }
     }
-    cleanup_if_current(&state, id).await;
-    state.emit_snapshot(&app).await;
+    // 流结束时的归属判定：
+    // - 仍持 owner（is_current）= 流意外死亡（网络断且库内重建失败）→ 退避重连；
+    //   用户手动断开/换连接会先取走 owner，走不到这里（B2：手动断开不重连）。
+    // - owner 已被取走 = 用户操作，旧任务静默收尾。
+    if is_current(&state, id).await {
+        state.audio.stop();
+        state.talking_clear();
+        state.set_own_client(0);
+        state.chat.reset_session();
+        arm_reconnect(app, state, address).await;
+    } else {
+        cleanup_if_current(&state, id).await;
+        state.emit_snapshot(&app).await;
+    }
+}
+
+/// 退避序列（秒）：5/10/20/40，之后封顶 60（docs/09 B2）。
+const RECONNECT_DELAYS: [u64; 5] = [5, 10, 20, 40, 60];
+
+fn backoff_delay(attempt: usize) -> u64 {
+    RECONNECT_DELAYS[(attempt - 1).min(RECONNECT_DELAYS.len() - 1)]
+}
+
+/// 经函数指针调用 connect_inner：arm_reconnect 的协程类型里只出现具体的
+/// fn 指针类型，不再内嵌 connect_inner 的 opaque future，从而打断
+/// connect_inner→connection_loop→driver_loop→arm_reconnect→connect_inner
+/// 的类型级循环（E0391）。
+fn connect_via_ptr(
+    app: AppHandle,
+    state: AppState,
+    active: ActiveConnection,
+    rejoin: Option<String>,
+) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
+    Box::pin(async move { connect_inner(&app, &state, active, rejoin).await })
+}
+
+/// 等待 wait_secs 秒；期间用户手动连接/断开（epoch 变化）立即返回 false。
+async fn wait_epoch(state: &AppState, wait_secs: u64, epoch: u64) -> bool {
+    for _ in 0..wait_secs {
+        if state.reconnect_epoch.load(Ordering::Relaxed) != epoch {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    state.reconnect_epoch.load(Ordering::Relaxed) == epoch
+}
+
+/// 应用层自动重连（docs/09 B2）：网络死亡（流意外结束）后按 5/10/20/40/60 秒
+/// 退避重连；连接参数复用断开前的 active，频道用 config.last_channel 恢复
+/// （select_channel 成功时会同步写回，见 save_last_channel）。恢复音频流由
+/// publish_state → ensure_started 完成。用户随时可手动连接/断开接管（epoch）。
+async fn arm_reconnect(app: AppHandle, state: AppState, address: String) {
+    let epoch = state.reconnect_epoch.load(Ordering::Relaxed);
+    tauri::async_runtime::spawn(async move {
+        let mut attempt: usize = 0;
+        loop {
+            attempt += 1;
+            let delay = backoff_delay(attempt);
+            warn!("连接意外断开（{address}），{delay} 秒后进行第 {attempt} 次自动重连");
+            {
+                let payload = ConnectionPayload {
+                    status: "disconnected".into(),
+                    reason: Some(format!("连接意外断开，{delay} 秒后自动重连（第 {attempt} 次）")),
+                    server_name: None,
+                    server_address: Some(address.clone()),
+                };
+                *state.connection.lock().await = payload.clone();
+                let _ = app.emit("connection://state", payload);
+                state.emit_snapshot(&app).await;
+            }
+            if !wait_epoch(&state, delay, epoch).await {
+                info!("自动重连已取消：用户手动操作接管");
+                return;
+            }
+            let Some(active) = state.active.lock().await.clone() else {
+                warn!("自动重连中止：没有可复用的连接参数");
+                return;
+            };
+            // 频道恢复目标：断开前所在频道（save_last_channel 已持久化）。
+            let rejoin = state.config.lock().await.last_channel.clone();
+            info!("自动重连：第 {attempt} 次尝试 → {}（恢复频道 {rejoin:?}）", active.address);
+            if let Err(e) = connect_via_ptr(app.clone(), state.clone(), active, rejoin).await {
+                warn!("自动重连第 {attempt} 次发起失败：{e}");
+                continue;
+            }
+            // 等本次尝试出结果：connected=成功返回；disconnected=失败继续退避。
+            loop {
+                if state.reconnect_epoch.load(Ordering::Relaxed) != epoch {
+                    info!("自动重连已取消：用户手动操作接管");
+                    return;
+                }
+                let payload = state.connection.lock().await.clone();
+                match payload.status.as_str() {
+                    "connected" => {
+                        info!("自动重连成功（第 {attempt} 次尝试）：频道与音频已恢复");
+                        return;
+                    }
+                    "disconnected" => {
+                        warn!(
+                            "自动重连第 {attempt} 次失败：{}",
+                            payload.reason.unwrap_or_else(|| "未知原因".into())
+                        );
+                        break;
+                    }
+                    _ => {}
+                }
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+        }
+    });
 }
 
 async fn publish_state(
@@ -809,4 +1032,25 @@ async fn publish_error(app: &AppHandle, state: &AppState, reason: String, addres
     let _ = app.emit("connection://state", payload);
     let _ = app.emit("error://user", serde_json::json!({ "message": reason }));
     state.emit_snapshot(app).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M5b B2：退避序列固定为 5/10/20/40 秒，第 5 次起封顶 60 秒。
+    /// 意外断开后按此序列自动重连；用户手动操作（epoch）随时取消。
+    #[test]
+    fn backoff_sequence_matches_task_card() {
+        let expected: Vec<u64> = vec![5, 10, 20, 40, 60, 60, 60, 60, 60, 60];
+        for (attempt, want) in expected.iter().enumerate() {
+            assert_eq!(
+                backoff_delay(attempt + 1),
+                *want,
+                "第 {} 次重连的退避应为 {} 秒",
+                attempt + 1,
+                want
+            );
+        }
+    }
 }

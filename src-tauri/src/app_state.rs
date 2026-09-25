@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, Mutex};
+use tracing::info;
 
 /// 一条说话状态（进快照与 voice://talking 事件）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -50,6 +51,9 @@ pub struct AppState {
     pub conn_tx: Arc<Mutex<Option<ConnOwner>>>,
     pub active: Arc<Mutex<Option<ActiveConnection>>>,
     pub next_conn_id: Arc<AtomicU64>,
+    /// M5b B2 连接意图代数：用户手动连接/断开时 +1；自动重连任务以此
+    /// 检测"用户已介入"并取消自己。
+    pub reconnect_epoch: Arc<AtomicU64>,
     /// M2 音频生命周期：采集/编码/发送开关。
     pub audio: AudioManager,
     /// M4 聊天事实状态：按目标键的日志、未读、当前频道。
@@ -67,6 +71,8 @@ pub struct AppState {
     // WebView2 安装状态进程内不变；只在外层 main 窗口创建前检测一次，
     // 避免在异步命令里反复同步 spawn reg（曾观察到偶发挂死）。
     runtime_available: bool,
+    /// M5c：Runtime 版本与安装来源（记录进日志与快照）。
+    webview2: crate::conn::WebView2Info,
     pending_error: Arc<Mutex<Option<String>>>,
 }
 
@@ -74,6 +80,14 @@ impl AppState {
     pub fn new() -> Self {
         let (config, notice) = load_config()
             .unwrap_or_else(|e| (AppConfig::default(), Some(format!("配置文件读取失败：{e}"))));
+        let webview2 = crate::conn::webview2_probe();
+        info!(
+            available = webview2.available,
+            version = webview2.version.as_deref().unwrap_or("未安装"),
+            source = webview2.source.as_deref().unwrap_or("无"),
+            machine = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "未知".into()),
+            "WebView2 Runtime 探测完成"
+        );
         Self {
             config: Arc::new(Mutex::new(config)),
             connection: Arc::new(Mutex::new(ConnectionPayload::default())),
@@ -81,6 +95,7 @@ impl AppState {
             conn_tx: Arc::new(Mutex::new(None)),
             active: Arc::new(Mutex::new(None)),
             next_conn_id: Arc::new(AtomicU64::new(0)),
+            reconnect_epoch: Arc::new(AtomicU64::new(0)),
             audio: AudioManager::new(),
             chat: ChatStore::new(),
             overlay: crate::overlay::OverlayState::default(),
@@ -88,7 +103,8 @@ impl AppState {
             talking: Arc::new(StdMutex::new(HashMap::new())),
             own_client: Arc::new(AtomicU64::new(0)),
             self_nickname: Arc::new(StdMutex::new("我".to_string())),
-            runtime_available: crate::conn::webview2_available(),
+            runtime_available: webview2.available,
+            webview2,
             pending_error: Arc::new(Mutex::new(notice)),
         }
     }
@@ -135,6 +151,7 @@ impl AppState {
             chat,
             overlay_enabled,
             material: material.to_string(),
+            webview2_version: self.webview2.version.clone(),
         }
     }
 

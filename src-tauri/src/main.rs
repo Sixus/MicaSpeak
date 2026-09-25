@@ -10,6 +10,9 @@ mod material;
 mod overlay;
 mod persistence;
 mod settings;
+mod tray;
+
+use std::sync::atomic::Ordering;
 
 use app_state::AppState;
 use conn::{connect, disconnect, get_app_snapshot, reconnect, select_channel};
@@ -20,6 +23,11 @@ use tauri::Manager;
 fn main() {
     // M5a：文件+stderr 双写日志先行（冷启动打点、重连退避等验收证据依赖它）。
     logging::init();
+    // M5c：WebView2 用户数据目录固定到数据根的 WebView2/（绿色目录=exe 旁 Data/）。
+    // 环境变量是 WebView2 加载器的权威路径，双击启动时 cwd 不可预测，conf 里的
+    // 相对路径不可靠。必须在任何 Webview 创建前设置。
+    let webview_data = crate::persistence::data_root().join("WebView2");
+    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &webview_data);
     tauri::Builder::default()
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
@@ -52,6 +60,23 @@ fn main() {
             // M5a：主窗口材质（Mica/实体回退）+ 系统深浅跟随。
             if let Err(e) = material::init_main_window_material(&state.material, &handle) {
                 log::warn!("窗口材质初始化失败：{e}");
+            }
+            // M5 B1：托盘。失败走降级预案（关闭=退出、最小化=任务栏），不中断启动。
+            if let Err(e) = tray::init(&handle) {
+                log::warn!("托盘初始化失败，启用降级预案（关闭=退出）：{e}");
+            }
+            // M5 B1：托盘可用时主窗口"关闭 = 隐藏到托盘"（保持连接）；降级时放行关闭。
+            if let Some(main_win) = handle.get_webview_window("main") {
+                let win = main_win.clone();
+                main_win.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        if tray::TRAY_OK.load(Ordering::Relaxed) {
+                            api.prevent_close();
+                            let _ = win.hide();
+                            log::info!("主窗口已隐藏到托盘（连接保持）");
+                        }
+                    }
+                });
             }
             // M3 A：全局 PTT 低级键盘钩子。目标键取自配置，钩子线程常驻消息泵。
             let vk = persistence::load_config()
