@@ -14,8 +14,17 @@ if (-not (Test-Path $exe)) { throw "未找到 $exe，请先运行 pnpm tauri bui
 
 $outRoot = Join-Path $ProjectRoot 'dist\MicaSpeak-portable'
 $appDir = Join-Path $outRoot 'MicaSpeak'
-if (Test-Path $appDir) { Remove-Item -Recurse -Force $appDir }
+# Data/ 里有用户身份私钥，重建绿色目录时必须原样保留（实机上曾因清掉
+# 运行中应用的 Data 丢失身份文件——打包前脚本也应先退出正在运行的应用）。
+$dataDir = Join-Path $appDir 'Data'
+$savedData = $null
+if (Test-Path $dataDir) {
+    $savedData = Join-Path $env:TEMP ('micaspeak-data-' + [guid]::NewGuid().ToString('N'))
+    Move-Item $dataDir $savedData
+}
+if (Test-Path $appDir) { try { Remove-Item -Recurse -Force $appDir } catch { if ($savedData) { Move-Item $savedData $dataDir }; throw } }
 New-Item -ItemType Directory -Path (Join-Path $appDir 'LICENSES\texts') -Force | Out-Null
+if ($savedData) { Move-Item $savedData $dataDir }
 
 Copy-Item $exe (Join-Path $appDir 'MicaSpeak.exe')
 New-Item -ItemType File -Path (Join-Path $appDir 'portable.dat') -Force | Out-Null
