@@ -117,7 +117,7 @@ $forbidden = Get-ChildItem $appDir -Recurse -File |
     Where-Object { $_.Name -match '^(msedgewebview2|WebView2Loader|msedgewebview)' }
 if ($forbidden) { throw "绿色目录中出现了 WebView2 运行时文件：$($forbidden.FullName)" }
 
-$size = (Get-ChildItem $appDir -Recurse -File | Measure-Object Length -Sum).Sum
+$size = (Get-ChildItem $appDir -Recurse -File | Where-Object { $_.FullName -notlike "$dataDir*" } | Measure-Object Length -Sum).Sum
 Write-Output ("绿色目录已生成：{0}" -f $appDir)
 Write-Output ("应用目录体积（不含 Data/，字节）：{0:N0}  ≈ {1:N2} MB" -f $size, ($size / 1MB))
 
@@ -130,7 +130,7 @@ $tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
 $parent = Split-Path -Parent $appDir
 $leaf = Split-Path -Leaf $appDir
 Push-Location $parent
-try { & $tarExe -a -c -f $zipPath $leaf; if ($LASTEXITCODE -ne 0) { throw "tar 打包失败（退出码 $LASTEXITCODE）" } }
+try { & $tarExe -a -c -f $zipPath --exclude 'MicaSpeak/Data' $leaf; if ($LASTEXITCODE -ne 0) { throw "tar 打包失败（退出码 $LASTEXITCODE）" } }
 finally { Pop-Location }
 $zipHash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
 $shaLine = "$zipHash  MicaSpeak-portable.zip"
