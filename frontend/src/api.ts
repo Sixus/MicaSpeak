@@ -49,3 +49,25 @@ export type OverlayStatePayload = { visible: boolean; editing: boolean; talkers:
 export async function subscribeOverlayState(onState: (payload: OverlayStatePayload) => void): Promise<UnlistenFn> {
   return listen<OverlayStatePayload>('overlay://state', (event) => onState(event.payload))
 }
+
+// M6b 安全等级：lib 内 hashcash 进度转发（increasing/progress/increased）
+// 与手动升级任务（manual-*），以及超出自动升级上限时的结构化要求。
+export type LevelUpPayload = {
+  phase: 'increasing' | 'progress' | 'increased'
+    | 'manual-start' | 'manual-progress' | 'manual-done' | 'manual-failed' | 'cancelled'
+  required?: number
+  current?: number
+  target?: number
+  elapsed_ms?: number
+  error?: string
+}
+
+export async function subscribeIdentityLevelUp(onEvent: (payload: LevelUpPayload) => void): Promise<UnlistenFn> {
+  return listen<LevelUpPayload>('identity://level-up', (event) => onEvent(event.payload))
+}
+
+export type LevelRequiredPayload = { required: number; have: number }
+
+export async function subscribeIdentityLevelRequired(onEvent: (payload: LevelRequiredPayload) => void): Promise<UnlistenFn> {
+  return listen<LevelRequiredPayload>('identity://level-required', (event) => onEvent(event.payload))
+}

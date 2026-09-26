@@ -54,6 +54,10 @@ pub struct AppState {
     /// M5b B2 连接意图代数：用户手动连接/断开时 +1；自动重连任务以此
     /// 检测"用户已介入"并取消自己。
     pub reconnect_epoch: Arc<AtomicU64>,
+    /// M6b 安全等级进度打点代数：新事件/结束时 +1，旧打点任务退出。
+    pub level_up_epoch: Arc<AtomicU64>,
+    /// M6b 手动升级取消标志（分级推进，块间检查）。
+    pub security_upgrade_cancel: Arc<AtomicU64>,
     /// M2 音频生命周期：采集/编码/发送开关。
     pub audio: AudioManager,
     /// M4 聊天事实状态：按目标键的日志、未读、当前频道。
@@ -100,6 +104,8 @@ impl AppState {
             active: Arc::new(Mutex::new(None)),
             next_conn_id: Arc::new(AtomicU64::new(0)),
             reconnect_epoch: Arc::new(AtomicU64::new(0)),
+            level_up_epoch: Arc::new(AtomicU64::new(0)),
+            security_upgrade_cancel: Arc::new(AtomicU64::new(0)),
             audio: AudioManager::new(),
             chat: ChatStore::new(),
             overlay: crate::overlay::OverlayState::default(),

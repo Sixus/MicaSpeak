@@ -8,8 +8,9 @@
 //! 带密码导出串是加密格式，解析失败为预期（任务卡已知坑）。
 
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::Ordering;
 use std::{fs, io, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tsclientlib::Identity;
 
 use tracing::info;
@@ -343,4 +344,97 @@ pub async fn export_identity(state: State<'_, AppState>, id: String) -> Result<S
     };
     let _ = state;
     Ok(format!("{}V{}", record.identity.counter(), record.identity.key().to_ts_obfuscated()))
+}
+
+// ---- M6b 安全等级 ----
+
+/// 手动提升当前身份的安全等级到 target（服务器要求超过库内自动升级上限时用）。
+/// hashcash 复用 lib 的 upgrade_level，分级推进：每完成 1 级落盘一次并发进度
+/// 事件，块间可取消；取消/失败/重启都安全（已完成等级已持久化）。
+/// 完成后前端负责发起重连（connect/reconnect 会带上新身份回原频道）。
+#[tauri::command]
+pub async fn start_security_upgrade(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    target: u8,
+) -> Result<(), String> {
+    if !(1..=30).contains(&target) {
+        return Err("目标等级需在 1 到 30 之间".into());
+    }
+    let mut record = load_active_identity(&state.config).await?;
+    let current = record.identity.level();
+    if current >= target {
+        return Err(format!("当前身份等级已是 {current}，无需提升"));
+    }
+    // 新任务代数：取消旧任务（若有），本任务以此为凭。
+    let epoch = state.security_upgrade_cancel.fetch_add(1, Ordering::Relaxed) + 1;
+    let app2 = app.clone();
+    let state2 = state.inner().clone();
+    let started = std::time::Instant::now();
+    tauri::async_runtime::spawn(async move {
+        let _ = app2.emit(
+            "identity://level-up",
+            serde_json::json!({ "phase": "manual-start", "current": current, "target": target }),
+        );
+        let mut level = current;
+        while level < target {
+            if state2.security_upgrade_cancel.load(Ordering::Relaxed) != epoch {
+                let _ = app2.emit("identity://level-up", serde_json::json!({ "phase": "cancelled" }));
+                return;
+            }
+            let next = level + 1;
+            let mut rec = record.clone();
+            let upgraded = tokio::task::spawn_blocking(move || {
+                rec.identity.upgrade_level(next);
+                rec
+            })
+            .await;
+            match upgraded {
+                Ok(upgraded_record) => {
+                    record = upgraded_record;
+                    if let Err(e) = save_record(&record) {
+                        let _ = app2.emit(
+                            "identity://level-up",
+                            serde_json::json!({ "phase": "manual-failed", "error": format!("保存身份失败：{e}") }),
+                        );
+                        return;
+                    }
+                    level = next;
+                    let _ = app2.emit(
+                        "identity://level-up",
+                        serde_json::json!({
+                            "phase": "manual-progress",
+                            "current": level,
+                            "target": target,
+                            "elapsed_ms": started.elapsed().as_millis() as u64,
+                        }),
+                    );
+                }
+                Err(_) => {
+                    let _ = app2.emit(
+                        "identity://level-up",
+                        serde_json::json!({ "phase": "manual-failed", "error": "等级计算任务失败" }),
+                    );
+                    return;
+                }
+            }
+        }
+        let _ = app2.emit(
+            "identity://level-up",
+            serde_json::json!({
+                "phase": "manual-done",
+                "current": level,
+                "target": target,
+                "elapsed_ms": started.elapsed().as_millis() as u64,
+            }),
+        );
+    });
+    Ok(())
+}
+
+/// 取消手动升级（代数 +1，旧任务在下一个块间退出；已完成等级保持已落盘）。
+#[tauri::command]
+pub async fn cancel_security_upgrade(state: State<'_, AppState>) -> Result<(), String> {
+    state.security_upgrade_cancel.fetch_add(1, Ordering::Relaxed);
+    Ok(())
 }

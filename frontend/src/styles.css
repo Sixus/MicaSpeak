@@ -237,3 +237,20 @@ button:disabled { cursor: default; opacity: .55; }
   .modal-card .modal-body { color: rgba(255,255,255,.65); }
   .modal-card textarea { border-color: rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: #fff; }
 }
+
+/* ---- M6b 安全等级横幅 ---- */
+.levelup-banner { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid rgba(0,120,212,.35); border-radius: 6px; background: rgba(0,120,212,.08); font-size: 12px; }
+.levelup-banner strong { font-size: 12.5px; color: #0078d4; }
+.levelup-banner span { color: #4a5560; line-height: 1.5; }
+.levelup-banner .modal-actions { margin-top: 4px; gap: 8px; }
+.levelup-banner .secondary-button, .levelup-banner .primary-button { min-height: 30px; min-width: 0; width: auto; padding: 0 12px; }
+.levelup-bad { border-color: rgba(189,48,54,.4); background: rgba(189,48,54,.07); }
+.levelup-bad strong { color: #bd3036; }
+
+@media (prefers-color-scheme: dark) {
+  .levelup-banner { border-color: rgba(75,163,232,.4); background: rgba(75,163,232,.1); }
+  .levelup-banner strong { color: #4ba3e8; }
+  .levelup-banner span { color: rgba(255,255,255,.6); }
+  .levelup-bad { border-color: rgba(255,122,128,.4); background: rgba(229,72,77,.12); }
+  .levelup-bad strong { color: #ff7a80; }
+}

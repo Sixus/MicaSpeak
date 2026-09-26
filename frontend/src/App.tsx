@@ -3,6 +3,8 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import {
   subscribeChatMessage,
   subscribeDeviceError,
+  subscribeIdentityLevelRequired,
+  subscribeIdentityLevelUp,
   subscribeLevel,
   subscribeOverlayState,
   subscribeRuntimeMissing,
@@ -11,6 +13,8 @@ import {
   subscribeUserError,
   tauriInvoke,
   type LevelPayload,
+  type LevelRequiredPayload,
+  type LevelUpPayload,
   type OverlayStatePayload,
   type TalkingPayload,
 } from './api'
@@ -764,12 +768,103 @@ function ChatPanel({ tabs, ownChannelId, channels, viewing, setViewing, onNotice
   )
 }
 
-function ConnectForm({ snapshot, onConnect, onConnectBookmark, onSave, onDelete }: {
+// M6b：安全等级横幅——lib 自动升级（increasing/progress/increased）与
+// 手动升级任务（manual-*）共用；计时在事件值基础上每秒本地续走。
+function LevelUpBanner({ levelUp, levelRequired, onDismiss, onStartUpgrade, onCancelUpgrade }: {
+  levelUp: LevelUpPayload | null
+  levelRequired: LevelRequiredPayload | null
+  onDismiss: () => void
+  onStartUpgrade: () => void
+  onCancelUpgrade: () => void
+}) {
+  const [, tick] = useState(0)
+  const active = levelUp != null || levelRequired != null
+  useEffect(() => {
+    if (!active) return
+    const timer = window.setInterval(() => tick((n) => n + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [active])
+  if (levelUp) {
+    const elapsedBase = levelUp.elapsed_ms ?? 0
+    const seconds = Math.floor(elapsedBase / 1000)
+    if (levelUp.phase === 'increasing' || levelUp.phase === 'progress') {
+      return (
+        <div className="levelup-banner" role="status">
+          <strong>正在提升安全等级…</strong>
+          <span>服务器要求 {levelUp.required} 级，身份等级不足，后台正在计算（已用时 {formatElapsed(seconds)}）。完成后会自动重连，期间界面可正常操作。</span>
+        </div>
+      )
+    }
+    if (levelUp.phase === 'increased') {
+      return (
+        <div className="levelup-banner" role="status">
+          <strong>安全等级已达标</strong>
+          <span>正在用升级后的身份重新连接服务器…</span>
+        </div>
+      )
+    }
+    if (levelUp.phase === 'manual-start' || levelUp.phase === 'manual-progress') {
+      return (
+        <div className="levelup-banner" role="status">
+          <strong>正在提升安全等级（{levelUp.current}/{levelUp.target} 级）</strong>
+          <span>后台计算中，已用时 {formatElapsed(seconds)}；等级越高耗时越长，可随时取消（已完成等级会保留）。</span>
+          <div className="modal-actions">
+            <button className="secondary-button" onClick={onCancelUpgrade}>取消升级</button>
+          </div>
+        </div>
+      )
+    }
+    if (levelUp.phase === 'manual-done') {
+      return (
+        <div className="levelup-banner" role="status">
+          <strong>安全等级已提升到 {levelUp.target} 级</strong>
+          <span>用时 {formatElapsed(seconds)}，正在重新连接服务器并回到原频道…</span>
+        </div>
+      )
+    }
+    if (levelUp.phase === 'manual-failed') {
+      return (
+        <div className="levelup-banner levelup-bad" role="alert">
+          <strong>安全等级提升失败</strong>
+          <span>{levelUp.error ?? '未知错误'}</span>
+          <div className="modal-actions"><button className="secondary-button" onClick={onDismiss}>关闭</button></div>
+        </div>
+      )
+    }
+    return null
+  }
+  if (levelRequired) {
+    return (
+      <div className="levelup-banner levelup-bad" role="alert">
+        <strong>需要更高的安全等级</strong>
+        <span>此服务器要求 {levelRequired.required} 级，当前身份 {levelRequired.have} 级。提升可能耗时较长（等级越高越久），确认后开始。</span>
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onDismiss}>暂不升级</button>
+          <button className="primary-button" onClick={onStartUpgrade}>提升安全等级</button>
+        </div>
+      </div>
+    )
+  }
+  return null
+}
+
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds} 秒`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes} 分 ${seconds % 60} 秒`
+}
+
+function ConnectForm({ snapshot, levelUp, levelRequired, onConnect, onConnectBookmark, onSave, onDelete, onDismissLevel, onStartUpgrade, onCancelUpgrade }: {
   snapshot: AppSnapshot
+  levelUp: LevelUpPayload | null
+  levelRequired: LevelRequiredPayload | null
   onConnect: (address: string, nickname: string, password: string) => Promise<void>
   onConnectBookmark: (bookmark: Bookmark) => void
   onSave: (address: string, nickname: string, password: string) => Promise<void>
   onDelete: (id: string) => void
+  onDismissLevel: () => void
+  onStartUpgrade: () => void
+  onCancelUpgrade: () => void
 }) {
   const [address, setAddress] = useState('saintbb1234.ts3.uno:9987')
   const [nickname, setNickname] = useState('MicaSpeak')
@@ -795,6 +890,13 @@ function ConnectForm({ snapshot, onConnect, onConnectBookmark, onSave, onDelete 
     <section className="connect-page">
       <div className="brand-lockup"><div className="brand-mark">M</div><div><strong>MicaSpeak</strong><span>TS3 语音客户端</span></div></div>
       <div className="form-card">
+        <LevelUpBanner
+          levelUp={levelUp}
+          levelRequired={levelRequired}
+          onDismiss={onDismissLevel}
+          onStartUpgrade={onStartUpgrade}
+          onCancelUpgrade={onCancelUpgrade}
+        />
         <label>服务器地址<input value={address} onChange={(e) => setAddress(e.target.value)} onKeyDown={onEnterConnect} placeholder="主机:9987" /></label>
         <label>昵称<input value={nickname} onChange={(e) => setNickname(e.target.value)} onKeyDown={onEnterConnect} placeholder="你的昵称" /></label>
         <label>服务器密码 <span className="optional">可选</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={onEnterConnect} /></label>
@@ -917,6 +1019,9 @@ function AppShell() {
   // M4b：正在查看的聊天标签（null=跟随当前频道）与频道树右键菜单
   const [viewing, setViewing] = useState<ViewingTarget | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; client: ClientNode } | null>(null)
+  // M6b：安全等级提升进度与结构化要求（连接页横幅）。
+  const [levelUp, setLevelUp] = useState<LevelUpPayload | null>(null)
+  const [levelRequired, setLevelRequired] = useState<LevelRequiredPayload | null>(null)
   const promptRef = useRef(pwdPrompt)
   promptRef.current = pwdPrompt
   // M3 A4：设置窗口复用同一 React 应用与后端状态，按窗口标签路由。
@@ -941,6 +1046,11 @@ function AppShell() {
           setChatTabs(next.chat)
           // 快照是权威状态：用快照里的说话列表整体校正（覆盖漏收的事件）
           setTalking(new Map(next.talking.map((t) => [t.client_id, t.name])))
+          // M6b：连上/断开后清等级横幅（手动升级任务除外，由其自身结束事件收尾）
+          if (next.connection.status === 'connected') {
+            setLevelUp(null)
+            setLevelRequired(null)
+          }
         }))
         offs.push(await subscribeChatMessage((payload) => {
           if (!active) return
@@ -977,6 +1087,20 @@ function AppShell() {
           if (!active) return
           setNotice(message)
           setTimeout(() => setNotice(''), 5000)
+        }))
+        // M6b：安全等级事件。
+        offs.push(await subscribeIdentityLevelUp((payload) => {
+          if (!active) return
+          if (payload.phase === 'cancelled') { setLevelUp(null); return }
+          if (payload.phase === 'manual-done') {
+            // 达标后自动重连（connect/reconnect 会带上新身份回原频道）
+            setTimeout(() => { void tauriInvoke('reconnect').catch(() => {}) }, 600)
+          }
+          setLevelUp(payload)
+        }))
+        offs.push(await subscribeIdentityLevelRequired((payload) => {
+          if (!active) return
+          setLevelRequired(payload)
         }))
         offs.push(await subscribeTalking((p) => {
           if (!active) return
@@ -1079,7 +1203,11 @@ function AppShell() {
   if (isSettingsWindow) return <SettingsPage snapshot={snapshot} started={started} levels={levels} />
   if (!started) return <main className="loading-page"><div className="loader" /><span>正在启动 MicaSpeak…</span></main>
   const noticeEl = notice ? <div className="notice">{notice}</div> : null
-  if (!connected) return <>{noticeEl}<ConnectForm snapshot={snapshot} onConnect={connect} onConnectBookmark={(b) => void connectBookmark(b)} onSave={save} onDelete={(id) => void removeBookmark(id)} /></>
+  if (!connected) return <>{noticeEl}<ConnectForm snapshot={snapshot} levelUp={levelUp} levelRequired={levelRequired} onConnect={connect} onConnectBookmark={(b) => void connectBookmark(b)} onSave={save} onDelete={(id) => void removeBookmark(id)} onDismissLevel={() => { setLevelUp(null); setLevelRequired(null) }} onStartUpgrade={() => {
+    const target = levelRequired?.required
+    setLevelRequired(null)
+    if (target) void tauriInvoke('start_security_upgrade', { target }).catch((err) => setNotice(String(err).replace(/^Error:\s*/, '')))
+  }} onCancelUpgrade={() => void tauriInvoke('cancel_security_upgrade').catch(() => {})} /></>
 
   return (
     <main className="app-shell">

@@ -165,6 +165,16 @@ fn friendly_error(e: &TslError) -> String {
             TsError::ServerInvalidPassword => "服务器密码错误".into(),
             ref other => format!("服务器拒绝连接：{other:?}"),
         },
+        // M6b：等级不足（库内自动升级只支持到 20 级，更高要求走手动升级）。
+        TslError::IdentityLevel(needed) => {
+            format!("服务器要求安全等级 {needed}，当前身份等级不足。可在下方点击「提升安全等级」开始升级（等级越高耗时越长）")
+        }
+        TslError::IdentityLevelCorrupted { needed, have } => {
+            format!("身份等级异常：服务器要求 {needed}，当前身份已是 {have}，请尝试导入或新建身份")
+        }
+        TslError::IdentityLevelIncreaseFailedThread => {
+            "安全等级提升任务异常结束，请重试".into()
+        }
         TslError::ConnectFailed { .. }
         | TslError::Connect(_)
         | TslError::ConnectionFailed(_)
@@ -332,6 +342,7 @@ async fn disconnect_inner(state: &AppState) {
     if let Some(owner) = state.conn_tx.lock().await.take() {
         let _ = owner.tx.send(ConnCommand::Shutdown).await;
     }
+    stop_level_progress(state);
     state.audio.stop();
     state.talking_clear();
     state.set_own_client(0);
@@ -496,6 +507,8 @@ async fn driver_loop(
 ) {
     let mut joined: Option<String> = None;
     let mut pending_rejoin: Option<String> = None;
+    // M6b：等级提升目标（IdentityLevelIncreasing 记录，Increased 时消费）。
+    let mut level_up_target: Option<u8> = None;
     while let Some(item) = sync.next().await {
         // 连接已被替换/断开（owner 换人）后不再发布任何状态，
         // 否则会把 disconnect 重置好的界面覆盖成幽灵"已连接"。
@@ -607,8 +620,51 @@ async fn driver_loop(
                 info!(?reason, ?pending_rejoin, "临时断连：库内将自动重建，准备重进原频道");
                 publish_temporary_disconnect(&app, &state, reason, address.clone()).await;
             }
+            // M6b B1：等级不足时 lib 内部线程自行计算 hashcash 并自动重建连接；
+            // 这里只转发事件与维持进度打点（不自研 hashcash 任务）。
+            Ok(SyncStreamItem::IdentityLevelIncreasing(required)) => {
+                info!(required, "服务器要求更高安全等级，lib 正在计算 hashcash，结束后自动重连");
+                level_up_target = Some(required);
+                spawn_level_progress(&app, &state, required);
+                let _ = app.emit("identity://level-up", serde_json::json!({
+                    "phase": "increasing",
+                    "required": required,
+                    "elapsed_ms": 0,
+                }));
+            }
+            Ok(SyncStreamItem::IdentityLevelIncreased) => {
+                info!("安全等级提升完成，lib 正在用新身份重建连接");
+                stop_level_progress(&state);
+                let _ = app.emit("identity://level-up", serde_json::json!({ "phase": "increased" }));
+                // lib 的 options 不外露升级后身份：同 key 同起点重推导确定性收敛
+                // 到同一 counter，后台落盘（否则下次连接要重算整个 hashcash）。
+                if let Some(required) = level_up_target.take() {
+                    persist_upgraded_identity(&state, required);
+                }
+            }
             Ok(_) => {}
             Err(e) => {
+                // M6b B1：等级要求超出库内自动升级上限（>20）或身份异常时，
+                // 额外发结构化事件，前端据此显示当前/要求等级与升级按钮。
+                let level_info = match &e {
+                    TslError::IdentityLevel(required) => Some((*required, None)),
+                    TslError::IdentityLevelCorrupted { needed, have } => Some((*needed, Some(*have))),
+                    _ => None,
+                };
+                if let Some((required, have)) = level_info {
+                    stop_level_progress(&state);
+                    let have = match have {
+                        Some(h) => h,
+                        None => crate::identity::load_active_identity(&state.config)
+                            .await
+                            .map(|r| r.identity.level())
+                            .unwrap_or(0),
+                    };
+                    let _ = app.emit(
+                        "identity://level-required",
+                        serde_json::json!({ "required": required, "have": have }),
+                    );
+                }
                 publish_error(&app, &state, friendly_error(&e), Some(address.clone())).await;
                 break;
             }
@@ -618,6 +674,7 @@ async fn driver_loop(
     // - 仍持 owner（is_current）= 流意外死亡（网络断且库内重建失败）→ 退避重连；
     //   用户手动断开/换连接会先取走 owner，走不到这里（B2：手动断开不重连）。
     // - owner 已被取走 = 用户操作，旧任务静默收尾。
+    stop_level_progress(&state);
     if is_current(&state, id).await {
         state.audio.stop();
         state.talking_clear();
@@ -632,6 +689,66 @@ async fn driver_loop(
 
 /// 退避序列（秒）：5/10/20/40，之后封顶 60（docs/09 B2）。
 const RECONNECT_DELAYS: [u64; 5] = [5, 10, 20, 40, 60];
+
+/// M6b：等级提升进度打点——每 3 秒推送一次已耗时（lib 只给起止事件）；
+/// epoch 变化（完成/断开/新一次提升）即退出。
+fn spawn_level_progress(app: &AppHandle, state: &AppState, required: u8) {
+    let epoch = state
+        .level_up_epoch
+        .fetch_add(1, Ordering::Relaxed)
+        + 1;
+    let state2 = state.clone();
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let start = std::time::Instant::now();
+        let mut interval = tokio::time::interval(Duration::from_secs(3));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if state2.level_up_epoch.load(Ordering::Relaxed) != epoch {
+                return;
+            }
+            let _ = app2.emit(
+                "identity://level-up",
+                serde_json::json!({
+                    "phase": "progress",
+                    "required": required,
+                    "elapsed_ms": start.elapsed().as_millis() as u64,
+                }),
+            );
+        }
+    });
+}
+
+/// 结束当前进度打点任务。
+fn stop_level_progress(state: &AppState) {
+    state.level_up_epoch.fetch_add(1, Ordering::Relaxed);
+}
+
+/// lib 完成升级后，把当前身份文件的计数器重推导到 required 并落盘
+/// （确定性：同 key、同起点 counter 必得同一结果；与 lib 内部计算等价）。
+fn persist_upgraded_identity(state: &AppState, required: u8) {
+    let state = state.clone();
+    tauri::async_runtime::spawn(async move {
+        let Ok(mut record) = crate::identity::load_active_identity(&state.config).await else {
+            return;
+        };
+        if record.identity.level() >= required {
+            return;
+        }
+        let required_str = required;
+        let result = tokio::task::spawn_blocking(move || {
+            record.identity.upgrade_level(required_str);
+            crate::identity::save_record(&record)
+        })
+        .await;
+        match result {
+            Ok(Ok(())) => info!(required = required_str, "升级后的身份计数器已落盘"),
+            Ok(Err(e)) => warn!("升级后的身份落盘失败：{e}"),
+            Err(e) => warn!("升级后的身份落盘任务失败：{e}"),
+        }
+    });
+}
 
 fn backoff_delay(attempt: usize) -> u64 {
     RECONNECT_DELAYS[(attempt - 1).min(RECONNECT_DELAYS.len() - 1)]

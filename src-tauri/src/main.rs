@@ -59,7 +59,9 @@ fn main() {
             identity::create_identity,
             identity::delete_identity,
             identity::set_active_identity,
-            identity::export_identity
+            identity::export_identity,
+            identity::start_security_upgrade,
+            identity::cancel_security_upgrade
         ])
         .setup(|app| {
             let handle = app.handle().clone();
