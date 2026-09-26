@@ -115,7 +115,14 @@ Write-Output ("应用目录体积（不含 Data/，字节）：{0:N0}  ≈ {1:N2
 # ---- M6c C3：打 ZIP 包（不含 WebView2 Runtime， Evergreen 是系统前置） ----
 $zipPath = Join-Path $outRoot 'MicaSpeak-portable.zip'
 if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
-Compress-Archive -Path $appDir -DestinationPath $zipPath -CompressionLevel Optimal
+# Compress-Archive 对部分 crate 许可文件的非法 LastWriteTime 会抛异常，
+# 改用系统自带 bsdtar（绝对路径，避免 PATH 里的 MSYS/Git tar 把 D: 当主机名）。
+$tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
+$parent = Split-Path -Parent $appDir
+$leaf = Split-Path -Leaf $appDir
+Push-Location $parent
+try { & $tarExe -a -c -f $zipPath $leaf; if ($LASTEXITCODE -ne 0) { throw "tar 打包失败（退出码 $LASTEXITCODE）" } }
+finally { Pop-Location }
 $zipHash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
 $shaLine = "$zipHash  MicaSpeak-portable.zip"
 $shaLine | Out-File -FilePath ($zipPath + '.sha256') -Encoding ascii

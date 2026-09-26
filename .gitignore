@@ -10,3 +10,6 @@ gui-test-screenshots/
 .cu-test/
 logs/desktop.png
 dist/
+
+# M6 本地测试场地：TS3 服务器与官方身份导出（含私钥），永不入库
+archive/
