@@ -63,23 +63,45 @@ foreach ($p in $metadata.packages) {
 }
 $crateToCanon | Out-File -FilePath (Join-Path $appDir 'LICENSES\texts\MAPPING.txt') -Encoding utf8
 
-# ---- 说明文件 ----
-@'
+# ---- 说明文件（M6c C2：安装/运行、SHA256、范围、私钥安全、已知限制） ----
+$exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+$readme = @"
 MicaSpeak —— 非官方 TeamSpeak 3 第三方客户端（绿色便携版）
 
-运行前置：Windows 10/11 x64，且系统已安装 Microsoft Edge WebView2
-(Evergreen) 运行时。缺失时请安装：
-https://developer.microsoft.com/microsoft-edge/webview2/
-
-使用方法：
-1. 双击 MicaSpeak.exe 运行；本目录无安装器、不写注册表。
-2. 配置、身份与 WebView 数据保存在本目录 Data/ 下；删除 Data/
-   即恢复初始状态（身份文件 identity.json 含私钥，请勿外传）。
-3. 启动参数 --force-fallback：强制使用实体背景（跳过 Win11 Mica）。
-
 本应用与 TeamSpeak Systems GmbH 无关联；"TeamSpeak" 仅为兼容性说明。
-第三方组件许可见 LICENSES\THIRD-PARTY-NOTICES.txt。
-'@ | Out-File -FilePath (Join-Path $appDir 'README.txt') -Encoding utf8
+本应用仅支持 TeamSpeak 3 服务器（TS5/TS6 不在支持范围）。
+
+【安装与运行】
+1. 前置：Windows 10/11 x64，系统已安装 Microsoft Edge WebView2 (Evergreen)
+   运行时。检查方法：设置 → 应用 → 搜索 "WebView2"；或 PowerShell：
+   Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue
+   缺失时到官方页面安装（应用启动时也会显示引导页）：
+   https://developer.microsoft.com/microsoft-edge/webview2/
+2. 解压后双击 MicaSpeak.exe 运行；本目录无安装器、不写注册表。
+   应用自带 WebView2 状态检查，缺运行时会显示中文引导页。
+
+【SHA256 校验】
+MicaSpeak.exe:  $exeHash
+ZIP 包校验值见同目录 MicaSpeak-portable.zip.sha256。
+PowerShell 校验：Get-FileHash .\MicaSpeak.exe -Algorithm SHA256
+
+【数据与身份私钥安全】
+1. 配置、身份与 WebView 数据保存在本目录 Data/ 下；删除 Data/ 即恢复初始状态。
+2. Data\identities\ 下的身份文件包含私钥：请勿外传、勿截图、勿上传网盘、
+   勿交给同步盘。设置 → 身份 → 导出 会显示完整私钥，请确认环境安全。
+3. 使用"导出身份"得到的字符串可在官方客户端导入，反之亦然（仅限无密码导出）。
+
+【已知限制】
+1. 悬浮窗在独占全屏的游戏画面中不可见（Windows 系统限制）；无边框窗口化可正常显示。
+2. 当前台程序以管理员权限运行时，Windows UIPI 会阻止全局 PTT 热键生效；
+   请以相同权限运行本应用，或改用窗口内按钮说话。
+3. Win11 使用 Mica 系统材质；Win10 或启用失败时自动回退实体背景。
+   启动参数 --force-fallback 可强制实体背景。
+
+【第三方许可】
+许可见 LICENSES\THIRD-PARTY-NOTICES.txt 与 LICENSES	exts\。
+"@
+$readme | Out-File -FilePath (Join-Path $appDir 'README.txt') -Encoding utf8
 
 # ---- 校验：目录内不得出现 WebView2 运行时 ----
 $forbidden = Get-ChildItem $appDir -Recurse -File |
@@ -89,3 +111,14 @@ if ($forbidden) { throw "绿色目录中出现了 WebView2 运行时文件：$($
 $size = (Get-ChildItem $appDir -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Output ("绿色目录已生成：{0}" -f $appDir)
 Write-Output ("应用目录体积（不含 Data/，字节）：{0:N0}  ≈ {1:N2} MB" -f $size, ($size / 1MB))
+
+# ---- M6c C3：打 ZIP 包（不含 WebView2 Runtime， Evergreen 是系统前置） ----
+$zipPath = Join-Path $outRoot 'MicaSpeak-portable.zip'
+if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+Compress-Archive -Path $appDir -DestinationPath $zipPath -CompressionLevel Optimal
+$zipHash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
+$shaLine = "$zipHash  MicaSpeak-portable.zip"
+$shaLine | Out-File -FilePath ($zipPath + '.sha256') -Encoding ascii
+Write-Output ("ZIP 已生成：{0}" -f $zipPath)
+Write-Output ("ZIP SHA256：{0}" -f $zipHash)
+Write-Output ("ZIP 体积：{0:N2} MB" -f ((Get-Item $zipPath).Length / 1MB))

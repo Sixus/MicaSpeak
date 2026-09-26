@@ -74,9 +74,9 @@ pub struct AppState {
     self_nickname: Arc<StdMutex<String>>,
     // WebView2 安装状态进程内不变；只在外层 main 窗口创建前检测一次，
     // 避免在异步命令里反复同步 spawn reg（曾观察到偶发挂死）。
-    runtime_available: bool,
+    pub(crate) runtime_available: bool,
     /// M5c：Runtime 版本与安装来源（记录进日志与快照）。
-    webview2: crate::conn::WebView2Info,
+    pub(crate) webview2: crate::conn::WebView2Info,
     pending_error: Arc<Mutex<Option<String>>>,
 }
 

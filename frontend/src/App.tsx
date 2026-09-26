@@ -240,6 +240,47 @@ function IdentitySection({ snapshot, showNotice }: { snapshot: AppSnapshot; show
   )
 }
 
+// ---- M6c 关于卡：非官方声明、版本、构建日期、许可入口、WebView2 前置 ----
+
+type AboutInfo = {
+  version: string
+  build_date: string
+  webview2_version: string | null
+  webview2_available: boolean
+  disclaimer: string
+}
+
+function AboutSection({ snapshot, showNotice }: { snapshot: AppSnapshot; showNotice: (message: string) => void }) {
+  const [about, setAbout] = useState<AboutInfo | null>(null)
+  useEffect(() => {
+    let active = true
+    tauriInvoke<AboutInfo>('get_about_info')
+      .then((info) => { if (active) setAbout(info) })
+      .catch(() => {})
+    return () => { active = false }
+  }, [])
+  const webview2 = about?.webview2_version ?? snapshot.webview2_version ?? null
+  return (
+    <section className="settings-card">
+      <div className="section-label">关于</div>
+      <div className="about-row"><span className="setting-label">版本</span><span>{about ? `${about.version}（构建于 ${about.build_date}）` : '…'}</span></div>
+      <div className="about-row"><span className="setting-label">WebView2</span><span>{webview2 ? `Evergreen ${webview2}` : '未检测到'}</span></div>
+      <div className="setting-hint">
+        本应用使用系统级 Evergreen WebView2 运行时渲染界面（不随应用捆绑）。缺失时会显示安装引导页；
+        可在 <a className="chat-link" href="https://developer.microsoft.com/microsoft-edge/webview2/" target="_blank" rel="noreferrer">微软官网</a> 检查或安装。
+      </div>
+      <div className="setting-hint">{about?.disclaimer ?? 'MicaSpeak 是非官方的 TeamSpeak 3 第三方客户端，与 TeamSpeak Systems GmbH 无关联。'}</div>
+      <div className="setting-hint">本应用仅支持 TeamSpeak 3 服务器（TS5/TS6 不在支持范围）。</div>
+      <div className="identity-toolbar">
+        <button className="secondary-button"
+          onClick={() => tauriInvoke('open_licenses').catch((err) => showNotice(String(err).replace(/^Error:\s*/, '')))}>
+          查看第三方许可（LICENSES）
+        </button>
+      </div>
+    </section>
+  )
+}
+
 function SettingsPage({ snapshot, started, levels }: { snapshot: AppSnapshot; started: boolean; levels: LevelPayload }) {
   const [capturing, setCapturing] = useState(false)
   const [notice, setNotice] = useState('')
@@ -448,6 +489,8 @@ function SettingsPage({ snapshot, started, levels }: { snapshot: AppSnapshot; st
       </section>
 
       <IdentitySection snapshot={snapshot} showNotice={showNotice} />
+
+      <AboutSection snapshot={snapshot} showNotice={showNotice} />
 
       <section className="settings-card">
         <div className="section-label">外观</div>

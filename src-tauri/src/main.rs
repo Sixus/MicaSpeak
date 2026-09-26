@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod about;
 mod app_state;
 mod audio;
 mod chat;
@@ -61,7 +62,9 @@ fn main() {
             identity::set_active_identity,
             identity::export_identity,
             identity::start_security_upgrade,
-            identity::cancel_security_upgrade
+            identity::cancel_security_upgrade,
+            about::get_about_info,
+            about::open_licenses
         ])
         .setup(|app| {
             let handle = app.handle().clone();

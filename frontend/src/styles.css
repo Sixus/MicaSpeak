@@ -254,3 +254,8 @@ button:disabled { cursor: default; opacity: .55; }
   .levelup-bad { border-color: rgba(255,122,128,.4); background: rgba(229,72,77,.12); }
   .levelup-bad strong { color: #ff7a80; }
 }
+
+/* ---- M6c 关于卡 ---- */
+.about-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; }
+.about-row span:last-child { color: #262a30; }
+@media (prefers-color-scheme: dark) { .about-row span:last-child { color: rgba(255,255,255,.85); } }
