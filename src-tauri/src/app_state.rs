@@ -78,8 +78,12 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
-        let (config, notice) = load_config()
+        let (mut config, mut notice) = load_config()
             .unwrap_or_else(|e| (AppConfig::default(), Some(format!("配置文件读取失败：{e}"))));
+        // M6a：身份存储初始化（迁移旧 identity.json、保证 active_identity 有效）。
+        if let Some(identity_notice) = crate::identity::init_storage(&mut config) {
+            notice = notice.or(Some(identity_notice));
+        }
         let webview2 = crate::conn::webview2_probe();
         info!(
             available = webview2.available,
@@ -139,6 +143,11 @@ impl AppState {
             config.overlay.enabled
         };
         let material = self.material.get();
+        // M6a：身份列表视图（脱敏，无密钥材料）。
+        let identities = {
+            let config = self.config.lock().await;
+            crate::identity::list_views(&config)
+        };
         AppSnapshot {
             connection,
             channels,
@@ -152,6 +161,7 @@ impl AppState {
             overlay_enabled,
             material: material.to_string(),
             webview2_version: self.webview2.version.clone(),
+            identities,
         }
     }
 

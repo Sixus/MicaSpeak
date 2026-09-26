@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::PathBuf};
 use tauri::State;
-use tsclientlib::Identity;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BookmarkConfig {
@@ -26,6 +25,10 @@ pub struct AppConfig {
     /// M4c 悬浮窗设置；旧配置缺省时整体取默认（关闭，默认位置）。
     #[serde(default)]
     pub overlay: OverlayConfig,
+    /// M6a 当前身份 id（指向 Data/identities/<id>.json）；旧配置缺省 None，
+    /// 由 identity::init_storage 补齐。
+    #[serde(default)]
+    pub active_identity: Option<String>,
 }
 
 fn default_voice_mode() -> String {
@@ -160,6 +163,11 @@ fn atomic_write(path: &PathBuf, bytes: &[u8]) -> io::Result<()> {
     fs::rename(tmp, path)
 }
 
+/// identity.rs 等模块共用：临时文件 + rename 原子写。
+pub fn atomic_write_pub(path: &PathBuf, bytes: &[u8]) -> io::Result<()> {
+    atomic_write(path, bytes)
+}
+
 /// 返回配置与给用户的提示；提示非空表示原文件损坏，已备份并恢复默认。
 pub fn load_config() -> io::Result<(AppConfig, Option<String>)> {
     let path = data_root().join("config.json");
@@ -190,20 +198,6 @@ pub fn save_config(config: &AppConfig) -> io::Result<()> {
         &data_root().join("config.json"),
         &serde_json::to_vec_pretty(config).unwrap(),
     )
-}
-
-pub fn load_identity() -> io::Result<Identity> {
-    let path = data_root().join("identity.json");
-    match fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            let identity = Identity::create();
-            atomic_write(&path, &serde_json::to_vec_pretty(&identity).unwrap())?;
-            Ok(identity)
-        }
-        Err(e) => Err(e),
-    }
 }
 
 #[tauri::command]

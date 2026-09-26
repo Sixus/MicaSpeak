@@ -24,6 +24,15 @@ export type Bookmark = {
   last_channel: string | null
 }
 
+// M6a 身份视图：脱敏（无密钥材料），结构镜像 Rust identity.rs。
+export type IdentityView = {
+  id: string
+  label: string
+  uid_masked: string
+  level: number
+  active: boolean
+}
+
 export type TalkerState = {
   client_id: number
   name: string
@@ -86,6 +95,10 @@ export type AppSnapshot = {
   chat: ChatTabView[]
   /** M5a：'Mica' 或 '实体（回退…）'；旧后端缺省 undefined */
   material?: string
+  /** M5c：Evergreen WebView2 版本；旧后端缺省 undefined */
+  webview2_version?: string | null
+  /** M6a：身份列表（脱敏）；旧后端缺省 undefined */
+  identities?: IdentityView[]
 }
 
 export const emptySnapshot: AppSnapshot = {

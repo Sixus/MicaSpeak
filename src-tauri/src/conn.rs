@@ -1,6 +1,5 @@
 use crate::app_state::{ActiveConnection, AppState, ConnOwner};
 use crate::audio::{send_task, SEND_QUEUE};
-use crate::persistence::load_identity;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -75,6 +74,8 @@ pub struct AppSnapshot {
     pub material: String,
     /// M5c Evergreen WebView2 版本（缺省 None；向后兼容新字段）。
     pub webview2_version: Option<String>,
+    /// M6a 身份列表（脱敏视图：id/昵称/脱敏 uid/等级/是否当前）。
+    pub identities: Vec<crate::identity::IdentityView>,
 }
 
 pub enum ConnCommand {
@@ -223,7 +224,11 @@ async fn connect_inner(
     // 新连接任务必须清理旧任务（docs/09 B2）：旧 owner 收到 Shutdown，
     // 音频流/说话状态/频道树全部复位。
     disconnect_inner(state).await;
-    let identity = load_identity().map_err(|e| format!("身份文件无法读取：{e}"))?;
+    // M6a：加载当前身份（私钥只在 Rust 内存中短暂存在，不进事件/日志）。
+    let identity = crate::identity::load_active_identity(&state.config)
+        .await
+        .map_err(|e| format!("身份无法读取：{e}"))?
+        .identity;
     let mut password = password.filter(|p| !p.is_empty());
     let mut auto_join = rejoin_override;
     if auto_join.is_none() {

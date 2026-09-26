@@ -14,7 +14,7 @@ import {
   type OverlayStatePayload,
   type TalkingPayload,
 } from './api'
-import { emptySnapshot, type AppSnapshot, type Bookmark, type ChannelNode, type ChatMessageEvent, type ChatTabView, type ClientNode } from './types'
+import { emptySnapshot, type AppSnapshot, type Bookmark, type ChannelNode, type ChatMessageEvent, type ChatTabView, type ClientNode, type IdentityView } from './types'
 
 const fallbackSnapshot: AppSnapshot = {
   ...emptySnapshot,
@@ -49,6 +49,191 @@ function vkName(vk: number): string {
   if (vk >= 0x41 && vk <= 0x5a) return String.fromCharCode(vk)
   if (vk >= 0x30 && vk <= 0x39) return String(vk - 0x30)
   return `VK 0x${vk.toString(16).toUpperCase()}`
+}
+
+// ---- M6a 身份管理（设置页"身份"卡）：私钥只经 Rust 存取，这里只拿脱敏视图 ----
+
+// 通用确认弹窗（删除身份/导出警告共用）。
+function ConfirmModal({ title, body, confirmText, danger, busy, onConfirm, onCancel }: {
+  title: string
+  body: ReactNode
+  confirmText: string
+  danger?: boolean
+  busy?: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <strong>{title}</strong>
+        <div className="modal-body">{body}</div>
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onCancel} disabled={busy}>取消</button>
+          <button className={danger ? 'danger-button' : 'primary-button'} onClick={onConfirm} disabled={busy}>{confirmText}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 导入弹窗：多行不回显输入（-webkit-text-security），提交后立即清空明文。
+function ImportIdentityModal({ busy, error, onSubmit, onCancel }: {
+  busy: boolean
+  error: string
+  onSubmit: (data: string) => void
+  onCancel: () => void
+}) {
+  const [data, setData] = useState('')
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => { inputRef.current?.focus() }, [])
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal-card modal-wide" onClick={(e) => e.stopPropagation()}>
+        <strong>导入身份</strong>
+        <div className="modal-body">
+          <textarea
+            ref={inputRef}
+            className="secret-input"
+            rows={4}
+            value={data}
+            placeholder="粘贴官方客户端“无密码”导出的身份字符串（内容不回显）"
+            onChange={(e) => setData(e.target.value)}
+            disabled={busy}
+          />
+          <div className="setting-hint">仅支持官方客户端导出时密码留空的格式；带密码导出的字符串无法导入。提交后明文立即从界面丢弃。</div>
+          {error && <div className="error-line">{error}</div>}
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onCancel} disabled={busy}>取消</button>
+          <button className="primary-button" disabled={busy || !data.trim()} onClick={() => { const text = data; setData(''); onSubmit(text) }}>
+            {busy ? '正在导入…' : '导入'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 导出结果弹窗：含私钥，仅用户确认后出现；提供一键全选复制。
+function ExportIdentityModal({ secret, onDone }: { secret: string; onDone: () => void }) {
+  const areaRef = useRef<HTMLTextAreaElement>(null)
+  const copy = () => {
+    const area = areaRef.current
+    if (!area) return
+    area.focus(); area.select()
+    if (document.execCommand('copy')) window.alert('已复制到剪贴板。注意：剪贴板内容含私钥，粘贴后请及时覆盖。')
+  }
+  return (
+    <div className="modal-overlay" onClick={onDone}>
+      <div className="modal-card modal-wide" onClick={(e) => e.stopPropagation()}>
+        <strong>身份备份字符串</strong>
+        <div className="modal-body">
+          <div className="error-line">以下内容包含完整私钥：任何拿到它的人都能以你的身份登录。勿外传、勿截图、勿上传网盘。</div>
+          <textarea ref={areaRef} rows={4} readOnly value={secret} onFocus={(e) => e.currentTarget.select()} />
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={copy}>复制</button>
+          <button className="primary-button" onClick={onDone}>完成</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function IdentitySection({ snapshot, showNotice }: { snapshot: AppSnapshot; showNotice: (message: string) => void }) {
+  const identities = snapshot.identities ?? []
+  const [importing, setImporting] = useState(false)
+  const [importBusy, setImportBusy] = useState(false)
+  const [importError, setImportError] = useState('')
+  const [exporting, setExporting] = useState<IdentityView | null>(null)
+  const [exportSecret, setExportSecret] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<IdentityView | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const run = async (action: () => Promise<string | void>) => {
+    setBusy(true)
+    try {
+      const message = await action()
+      if (typeof message === 'string') showNotice(message)
+    } catch (err) {
+      showNotice(String(err).replace(/^Error:\s*/, ''))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const submitImport = (data: string) => {
+    setImportBusy(true); setImportError('')
+    tauriInvoke<IdentityView>('import_identity', { data, label: null })
+      .then((view) => {
+        setImporting(false)
+        showNotice(`身份「${view.label}」导入成功（等级 ${view.level}）`)
+      })
+      .catch((err) => setImportError(String(err).replace(/^Error:\s*/, '')))
+      .finally(() => setImportBusy(false))
+  }
+  return (
+    <section className="settings-card">
+      <div className="section-label">身份</div>
+      {!identities.length && <div className="empty-state compact">还没有身份：新建一个，或从官方客户端导入</div>}
+      {identities.map((identity) => (
+        <div className="identity-row" key={identity.id}>
+          <div className="identity-info">
+            <strong>{identity.label}{identity.active && <span className="identity-active">使用中</span>}</strong>
+            <small>Unique ID {identity.uid_masked} · 安全等级 {identity.level}</small>
+          </div>
+          <div className="identity-actions">
+            {!identity.active && (
+              <button className="secondary-button" disabled={busy}
+                onClick={() => void run(() => tauriInvoke<string>('set_active_identity', { id: identity.id }))}>
+                设为当前
+              </button>
+            )}
+            <button className="secondary-button" disabled={busy}
+              onClick={() => { setExporting(identity) }}>导出…</button>
+            <button className="secondary-button identity-delete" disabled={busy}
+              onClick={() => { setDeleting(identity) }}>删除</button>
+          </div>
+        </div>
+      ))}
+      <div className="identity-toolbar">
+        <button className="secondary-button" disabled={busy} onClick={() => { setImportError(''); setImporting(true) }}>导入身份…</button>
+        <button className="secondary-button" disabled={busy}
+          onClick={() => void run(() => tauriInvoke<IdentityView>('create_identity', { label: null }).then((view) => `已新建身份「${view.label}」`))}>新建身份</button>
+      </div>
+      <div className="setting-hint">切换身份后需重新连接服务器才会生效。身份文件（含私钥）只保存在本机 Data\identities\，不会上传。</div>
+
+      {importing && (
+        <ImportIdentityModal busy={importBusy} error={importError}
+          onSubmit={submitImport}
+          onCancel={() => { setImporting(false); setImportError('') }} />
+      )}
+      {exporting && exportSecret == null && (
+        <ConfirmModal title={`导出「${exporting.label}」？`}
+          body="导出将显示完整私钥字符串：任何拿到它的人都能以你的身份登录服务器。请确认周围无人、不录屏。"
+          confirmText="显示私钥" danger busy={busy}
+          onCancel={() => setExporting(null)}
+          onConfirm={() => {
+            void run(() => tauriInvoke<string>('export_identity', { id: exporting.id }).then((secret) => {
+              setExportSecret(secret)
+            }))
+          }} />
+      )}
+      {exportSecret != null && (
+        <ExportIdentityModal secret={exportSecret} onDone={() => { setExportSecret(null); setExporting(null) }} />
+      )}
+      {deleting && (
+        <ConfirmModal title={`删除身份「${deleting.label}」？`}
+          body={`将删除 ${deleting.label}（Unique ID ${deleting.uid_masked}）。此身份在服务器上的权限与等级绑定将不再可用。`}
+          confirmText="删除" danger busy={busy}
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => {
+            void run(() => tauriInvoke('delete_identity', { id: deleting.id }).then(() => '身份已删除'))
+            setDeleting(null)
+          }} />
+      )}
+    </section>
+  )
 }
 
 function SettingsPage({ snapshot, started, levels }: { snapshot: AppSnapshot; started: boolean; levels: LevelPayload }) {
@@ -257,6 +442,8 @@ function SettingsPage({ snapshot, started, levels }: { snapshot: AppSnapshot; st
           有人说话时显示昵称，停止约 1 秒后隐藏；位置改动会自动保存。独占全屏的游戏画面中悬浮窗不可见（已知限制）。
         </div>
       </section>
+
+      <IdentitySection snapshot={snapshot} showNotice={showNotice} />
 
       <section className="settings-card">
         <div className="section-label">外观</div>

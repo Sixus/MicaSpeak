@@ -208,3 +208,32 @@ button:disabled { cursor: default; opacity: .55; }
   :root[data-material='mica'] .bookmarks { background: rgba(43,43,43,.55); }
   .material-value { color: rgba(255,255,255,.85); }
 }
+
+/* ---- M6a 身份卡 ---- */
+.identity-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-top: 1px solid rgba(0,0,0,.06); }
+.identity-row:first-of-type { border-top: 0; }
+.identity-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.identity-info strong { font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.identity-info small { color: #6a7077; font-size: 11.5px; }
+.identity-active { padding: 1px 7px; border-radius: 999px; background: rgba(0,120,212,.1); color: #0078d4; font-size: 10.5px; font-weight: 600; }
+.identity-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.identity-actions .secondary-button { min-height: 30px; min-width: 0; }
+.identity-delete:hover { color: #bd3036; border-color: rgba(189,48,54,.4); }
+.identity-toolbar { display: flex; gap: 8px; padding-top: 4px; }
+.modal-card .modal-body { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: #4a4f57; }
+.modal-card.modal-wide { width: min(400px, calc(100% - 40px)); }
+.modal-card textarea { padding: 8px 10px; border: 1px solid rgba(0,0,0,.12); border-radius: 5px; background: rgba(255,255,255,.72); color: #1a1a1a; font-size: 12px; font-family: inherit; resize: vertical; outline: none; word-break: break-all; }
+.modal-card textarea:focus { border-color: #0078d4; box-shadow: 0 0 0 2px rgba(0,120,212,.14); }
+.secret-input { -webkit-text-security: disc; }
+.danger-button { min-width: 96px; min-height: 34px; padding: 0 14px; border: 1px solid rgba(189,48,54,.55); border-radius: 5px; background: #bd3036; color: #fff; font-size: 13px; }
+.danger-button:hover { background: #a52a30; }
+.danger-button:disabled { opacity: .55; }
+
+@media (prefers-color-scheme: dark) {
+  .identity-row { border-color: rgba(255,255,255,.08); }
+  .identity-info small { color: rgba(255,255,255,.55); }
+  .identity-active { background: rgba(75,163,232,.16); color: #4ba3e8; }
+  .identity-delete:hover { color: #ff7a80; border-color: rgba(255,122,128,.4); }
+  .modal-card .modal-body { color: rgba(255,255,255,.65); }
+  .modal-card textarea { border-color: rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: #fff; }
+}

@@ -5,6 +5,7 @@ mod audio;
 mod chat;
 mod conn;
 mod hotkey;
+mod identity;
 mod logging;
 mod material;
 mod overlay;
@@ -53,7 +54,12 @@ fn main() {
             list_audio_devices,
             set_audio_devices,
             save_bookmark,
-            delete_bookmark
+            delete_bookmark,
+            identity::import_identity,
+            identity::create_identity,
+            identity::delete_identity,
+            identity::set_active_identity,
+            identity::export_identity
         ])
         .setup(|app| {
             let handle = app.handle().clone();
