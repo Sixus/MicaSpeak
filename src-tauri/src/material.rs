@@ -150,3 +150,27 @@ pub fn init_main_window_material(
     });
     Ok(())
 }
+
+/// 次级窗口（设置）创建后应用材质：与主窗口共用同一决策事实（Mica/实体），
+/// DWM 属性按各自 HWND 生效；深浅切换同样重着色。
+/// 实体决策时不动窗口（CSS 保持不透明底，透明属性无副作用）。
+pub fn apply_to_secondary_window(manager: &MaterialManager, window: &WebviewWindow) {
+    if !manager.is_mica() {
+        return;
+    }
+    let dark = window_is_dark(window);
+    #[cfg(windows)]
+    {
+        if window_vibrancy::apply_mica(window, Some(dark)).is_ok() {
+            info!("设置窗口 Mica 已应用");
+            let theme_window = window.clone();
+            window.on_window_event(move |event| {
+                if matches!(event, tauri::WindowEvent::ThemeChanged(_)) {
+                    let _ = window_vibrancy::apply_mica(&theme_window, Some(window_is_dark(&theme_window)));
+                }
+            });
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = dark;
+}

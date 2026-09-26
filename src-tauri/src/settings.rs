@@ -36,18 +36,23 @@ pub async fn set_ptt_key(
 }
 
 /// 打开设置窗口（520×640，按需创建；已存在则聚焦）。复用同一后端状态。
+/// M5a：透明窗口 + 与主窗口同一材质决策（Mica 成功时设置页底面也是 Mica；
+/// 实体回退时 CSS 保持不透明，透明属性无副作用）。
 #[tauri::command]
 pub async fn open_settings(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("settings") {
         let _ = win.set_focus();
         return Ok(());
     }
-    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("index.html".into()))
+    let win = WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("index.html".into()))
         .title("MicaSpeak 设置")
         .inner_size(520.0, 640.0)
         .min_inner_size(460.0, 520.0)
+        .transparent(true)
         .build()
         .map_err(|e| format!("打开设置窗口失败：{e}"))?;
+    let state = app.state::<AppState>();
+    crate::material::apply_to_secondary_window(&state.material, &win);
     Ok(())
 }
 
