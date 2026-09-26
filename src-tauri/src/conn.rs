@@ -509,6 +509,8 @@ async fn driver_loop(
     let mut pending_rejoin: Option<String> = None;
     // M6b：等级提升目标（IdentityLevelIncreasing 记录，Increased 时消费）。
     let mut level_up_target: Option<u8> = None;
+    // 等级门槛错误（要求>20/身份异常）：不进入退避重连，等用户手动升级。
+    let mut level_gate = false;
     while let Some(item) = sync.next().await {
         // 连接已被替换/断开（owner 换人）后不再发布任何状态，
         // 否则会把 disconnect 重置好的界面覆盖成幽灵"已连接"。
@@ -653,6 +655,7 @@ async fn driver_loop(
                 };
                 if let Some((required, have)) = level_info {
                     stop_level_progress(&state);
+                    level_gate = true;
                     let have = match have {
                         Some(h) => h,
                         None => crate::identity::load_active_identity(&state.config)
@@ -680,7 +683,13 @@ async fn driver_loop(
         state.talking_clear();
         state.set_own_client(0);
         state.chat.reset_session();
-        arm_reconnect(app, state, address).await;
+        if level_gate {
+            // 等级门槛：自动重连只会反复撞服务器的等级校验（还可能触发反洪水
+            // 封禁），等用户在界面上点「提升安全等级」后由前端发起重连。
+            info!("连接被安全等级门槛拦下，等待用户升级身份后重连");
+        } else {
+            arm_reconnect(app, state, address).await;
+        }
     } else {
         cleanup_if_current(&state, id).await;
         state.emit_snapshot(&app).await;
