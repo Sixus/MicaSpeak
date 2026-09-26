@@ -183,31 +183,33 @@ button:disabled { cursor: default; opacity: .55; }
 }
 
 /* M5a 窗口材质：Mica 生效时窗口透明，页面改半透明底让系统材质透出；
-   实体回退时保持原不透明背景，视觉不变。 */
-html[data-material='mica'] body { background: transparent; }
-html[data-material='mica'] :root { background: rgba(238,242,248,.35); }
-html[data-material='mica'] .app-shell,
-html[data-material='mica'] .connect-page,
-html[data-material='mica'] .loading-page,
-html[data-material='mica'] .settings-page {
+   实体回退时保持原不透明背景，视觉不变。
+   注意：html 自身的底色必须用 :root[...]（不能写 html[...] :root——
+   :root 就是 html 本身，后代选择器永远匹配不到，会把 Mica 盖成不透明）。 */
+:root[data-material='mica'] { background: rgba(238,242,248,.35); }
+:root[data-material='mica'] body { background: transparent; }
+:root[data-material='mica'] .app-shell,
+:root[data-material='mica'] .connect-page,
+:root[data-material='mica'] .loading-page,
+:root[data-material='mica'] .settings-page {
   background: radial-gradient(120% 90% at 15% 0%, rgba(238,242,248,.55) 0%, rgba(234,236,239,.5) 45%, rgba(243,243,243,.45) 100%);
 }
-html[data-material='mica'] .runtime-page { background: radial-gradient(120% 90% at 15% 0%, rgba(238,242,248,.55) 0%, rgba(234,236,239,.5) 45%, rgba(243,243,243,.45) 100%); }
-html[data-material='mica'] .panel,
-html[data-material='mica'] .form-card,
-html[data-material='mica'] .bookmarks { background: rgba(255,255,255,.55); }
+:root[data-material='mica'] .runtime-page { background: radial-gradient(120% 90% at 15% 0%, rgba(238,242,248,.55) 0%, rgba(234,236,239,.5) 45%, rgba(243,243,243,.45) 100%); }
+:root[data-material='mica'] .panel,
+:root[data-material='mica'] .form-card,
+:root[data-material='mica'] .bookmarks { background: rgba(255,255,255,.55); }
 .material-value { font-size: 13px; color: #262a30; }
 @media (prefers-color-scheme: dark) {
-  html[data-material='mica'] :root { background: rgba(28,28,31,.4); }
-  html[data-material='mica'] .app-shell,
-  html[data-material='mica'] .connect-page,
-  html[data-material='mica'] .loading-page,
-  html[data-material='mica'] .runtime-page,
-  html[data-material='mica'] .settings-page {
+  :root[data-material='mica'] { background: rgba(28,28,31,.4); }
+  :root[data-material='mica'] .app-shell,
+  :root[data-material='mica'] .connect-page,
+  :root[data-material='mica'] .loading-page,
+  :root[data-material='mica'] .runtime-page,
+  :root[data-material='mica'] .settings-page {
     background: radial-gradient(120% 90% at 15% 0%, rgba(43,47,58,.55) 0%, rgba(35,37,44,.5) 42%, rgba(28,28,31,.45) 100%);
   }
-  html[data-material='mica'] .panel,
-  html[data-material='mica'] .form-card,
-  html[data-material='mica'] .bookmarks { background: rgba(43,43,43,.5); }
+  :root[data-material='mica'] .panel,
+  :root[data-material='mica'] .form-card,
+  :root[data-material='mica'] .bookmarks { background: rgba(43,43,43,.5); }
   .material-value { color: rgba(255,255,255,.85); }
 }
