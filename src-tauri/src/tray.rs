@@ -38,11 +38,10 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "tray-show" => show_main(app),
             "tray-settings" => {
-                show_main(app);
-                let handle = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = crate::settings::open_settings(handle).await;
-                });
+                // UI 改版：设置集成进主窗口——聚焦主窗口并发事件切到内置设置视图。
+                if let Err(e) = crate::settings::open_settings(app) {
+                    log::warn!("打开设置失败：{e}");
+                }
             }
             "tray-quit" => app.exit(0),
             _ => {}

@@ -6,6 +6,7 @@ import {
   subscribeIdentityLevelRequired,
   subscribeIdentityLevelUp,
   subscribeLevel,
+  subscribeOpenSettings,
   subscribeOverlayState,
   subscribeRuntimeMissing,
   subscribeSnapshot,
@@ -281,7 +282,9 @@ function AboutSection({ snapshot, showNotice }: { snapshot: AppSnapshot; showNot
   )
 }
 
-function SettingsPage({ snapshot, started, levels }: { snapshot: AppSnapshot; started: boolean; levels: LevelPayload }) {
+// embedded：嵌入主窗口内容区（连接中，顶栏/状态栏保留）；否则整页显示（未连接时）。
+// onBack：左上角常驻返回按钮（sticky，滚动时始终可见）。
+function SettingsPage({ snapshot, started, levels, onBack }: { snapshot: AppSnapshot; started: boolean; levels: LevelPayload; onBack: () => void }) {
   const [capturing, setCapturing] = useState(false)
   const [notice, setNotice] = useState('')
   const [devices, setDevices] = useState<{ inputs: string[]; outputs: string[] }>({ inputs: [], outputs: [] })
@@ -350,6 +353,9 @@ function SettingsPage({ snapshot, started, levels }: { snapshot: AppSnapshot; st
   const probPct = Math.min(100, Math.round((levels.prob || 0) * 100))
   return (
     <main className="settings-page">
+      <button className="settings-back" type="button" onClick={onBack} aria-label="返回主界面">
+        <span className="settings-back-arrow">‹</span>返回
+      </button>
       <header className="settings-header"><strong>设置</strong><span>语音与按键</span></header>
 
       <section className="settings-card">
@@ -897,7 +903,11 @@ function formatElapsed(seconds: number): string {
   return `${minutes} 分 ${seconds % 60} 秒`
 }
 
-function ConnectForm({ snapshot, levelUp, levelRequired, onConnect, onConnectBookmark, onSave, onDelete, onDismissLevel, onStartUpgrade, onCancelUpgrade }: {
+// 默认服务器地址：仅开发构建预填（不含端口，tsclientlib 缺省 9987）；
+// 发行构建（pnpm build / 打包）自动清空，避免泄露测试服务器（第 10 项）。
+const DEFAULT_ADDRESS = import.meta.env.DEV ? 'saintbb1234.ts3.uno' : ''
+
+function ConnectForm({ snapshot, levelUp, levelRequired, onConnect, onConnectBookmark, onSave, onDelete, onDismissLevel, onStartUpgrade, onCancelUpgrade, onOpenSettings }: {
   snapshot: AppSnapshot
   levelUp: LevelUpPayload | null
   levelRequired: LevelRequiredPayload | null
@@ -908,8 +918,9 @@ function ConnectForm({ snapshot, levelUp, levelRequired, onConnect, onConnectBoo
   onDismissLevel: () => void
   onStartUpgrade: () => void
   onCancelUpgrade: () => void
+  onOpenSettings: () => void
 }) {
-  const [address, setAddress] = useState('saintbb1234.ts3.uno:9987')
+  const [address, setAddress] = useState(DEFAULT_ADDRESS)
   const [nickname, setNickname] = useState('MicaSpeak')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -940,7 +951,7 @@ function ConnectForm({ snapshot, levelUp, levelRequired, onConnect, onConnectBoo
           onStartUpgrade={onStartUpgrade}
           onCancelUpgrade={onCancelUpgrade}
         />
-        <label>服务器地址<input value={address} onChange={(e) => setAddress(e.target.value)} onKeyDown={onEnterConnect} placeholder="主机:9987" /></label>
+        <label>服务器地址<input value={address} onChange={(e) => setAddress(e.target.value)} onKeyDown={onEnterConnect} placeholder="服务器地址（端口可省略，默认 9987）" /></label>
         <label>昵称<input value={nickname} onChange={(e) => setNickname(e.target.value)} onKeyDown={onEnterConnect} placeholder="你的昵称" /></label>
         <label>服务器密码 <span className="optional">可选</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={onEnterConnect} /></label>
         {(error || connectReason) && <div className="error-line">{error || connectReason}</div>}
@@ -963,7 +974,7 @@ function ConnectForm({ snapshot, levelUp, levelRequired, onConnect, onConnectBoo
         <span>{connecting ? '连接中…' : snapshot.connection.status === 'disconnected' && snapshot.connection.reason ? '已断开' : '未连接'}</span>
         <button
           className="settings-link"
-          onClick={() => void tauriInvoke('open_settings').catch((err) => { setError(String(err).replace(/^Error:\s*/, '')) })}
+          onClick={onOpenSettings}
         >⚙ 设置</button>
       </div>
     </section>
@@ -973,7 +984,7 @@ function ConnectForm({ snapshot, levelUp, levelRequired, onConnect, onConnectBoo
 function BookmarkRow({ bookmark, onConnect, onDelete }: { bookmark: Bookmark; onConnect: () => void; onDelete: () => void }) {
   return (
     <div className="bookmark-row">
-      <button className="bookmark-main" onDoubleClick={onConnect} title="双击连接">
+      <button className="bookmark-main" onClick={onConnect} title="单击连接">
         <span className="bookmark-icon">★</span>
         <span className="bookmark-text"><strong>{bookmark.nickname}</strong><small>{bookmark.address}</small></span>
         <span className="bookmark-arrow">›</span>
@@ -988,6 +999,17 @@ function BookmarkRow({ bookmark, onConnect, onDelete }: { bookmark: Bookmark; on
 export default function App() {
   const isOverlay = useMemo(() => {
     try { return getCurrentWebviewWindow().label === 'overlay' } catch { return false }
+  }, [])
+  // UI 改版：屏蔽 WebView 默认右键菜单（用户列表右键私聊走自绘菜单不受影响）。
+  // 输入框/文本域/下拉保留系统菜单，方便右键复制粘贴（Esc/Ctrl+V 均不受影响）。
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      const target = e.target
+      if (target instanceof Element && target.closest('input, textarea, select')) return
+      e.preventDefault()
+    }
+    window.addEventListener('contextmenu', onContextMenu)
+    return () => window.removeEventListener('contextmenu', onContextMenu)
   }, [])
   return isOverlay ? <OverlayPage /> : <AppShell />
 }
@@ -1067,10 +1089,14 @@ function AppShell() {
   const [levelRequired, setLevelRequired] = useState<LevelRequiredPayload | null>(null)
   const promptRef = useRef(pwdPrompt)
   promptRef.current = pwdPrompt
-  // M3 A4：设置窗口复用同一 React 应用与后端状态，按窗口标签路由。
-  const isSettingsWindow = useMemo(() => {
-    try { return getCurrentWebviewWindow().label === 'settings' } catch { return false }
-  }, [])
+  // UI 改版：独立设置窗口已删除，主窗口内用 page 切换"主界面/设置"视图。
+  const [page, setPage] = useState<'main' | 'settings'>('main')
+  // 第 1 项：主界面改为整块频道框；消息卡片默认收起，底部箭头开合。
+  const [chatOpen, setChatOpen] = useState(false)
+  const hasUnread = useMemo(
+    () => chatTabs.some((t) => t.unread > 0 && !(viewing && viewing.kind === t.kind && viewing.id === t.target_id)),
+    [chatTabs, viewing],
+  )
 
   // M5a：材质模式落成 data 属性，CSS 据此切换半透明（Mica）/不透明（实体）背景。
   useEffect(() => {
@@ -1155,6 +1181,8 @@ function AppShell() {
           })
         }))
         offs.push(await subscribeLevel((l) => { if (active) setLevels(l) }))
+        // UI 改版：托盘"打开设置"→ 主窗口内切换到设置视图。
+        offs.push(await subscribeOpenSettings(() => { if (active) setPage('settings') }))
         const initial = await tauriInvoke<AppSnapshot>('get_app_snapshot')
         if (active) {
           setSnapshot(initial)
@@ -1219,6 +1247,7 @@ function AppShell() {
     try {
       await tauriInvoke('open_private_chat', { clientId })
       setViewing({ kind: 'private', id: clientId })
+      setChatOpen(true) // 消息卡片收起时，从右键菜单发起私聊要把它弹出来
     } catch (err) {
       setNotice(String(err).replace(/^Error:\s*/, ''))
       setTimeout(() => setNotice(''), 3000)
@@ -1243,10 +1272,54 @@ function AppShell() {
   }
 
   if (runtimeMissing || (started && !snapshot.runtime_available)) return <RuntimeMissing />
-  if (isSettingsWindow) return <SettingsPage snapshot={snapshot} started={started} levels={levels} />
   if (!started) return <main className="loading-page"><div className="loader" /><span>正在启动 MicaSpeak…</span></main>
   const noticeEl = notice ? <div className="notice">{notice}</div> : null
-  if (!connected) return <>{noticeEl}<ConnectForm snapshot={snapshot} levelUp={levelUp} levelRequired={levelRequired} onConnect={connect} onConnectBookmark={(b) => void connectBookmark(b)} onSave={save} onDelete={(id) => void removeBookmark(id)} onDismissLevel={() => { setLevelUp(null); setLevelRequired(null) }} onStartUpgrade={() => {
+
+  const openSettings = () => setPage('settings')
+  // 顶栏/状态栏在主界面与设置视图间共用。
+  const topbarEl = (
+    <header className="topbar">
+      <div className={`status-dot ${snapshot.connection.status}`} />
+      <div className="server-title"><strong>{snapshot.connection.server_name || 'TS3 服务器'}</strong><span>{snapshot.connection.server_address}</span></div>
+      <span className="status-text">{statusText(snapshot)}</span>
+      <button className="icon-button" onClick={openSettings} aria-label="打开设置">⚙</button>
+      <button className="icon-button" onClick={() => void disconnect()} aria-label="断开连接">×</button>
+    </header>
+  )
+  const statusbarEl = (
+    <footer className="statusbar">
+      {/* 第 7/8 项：仅 PTT 模式显示按住说话按钮，文案带上全局按键名 */}
+      {snapshot.voice.mode === 'ptt' && (
+        <button
+          className={`ptt-chip hold ${transmitting ? 'active' : ''}`}
+          disabled={!connected}
+          aria-label="按住说话"
+          onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); setTransmit(true) }}
+          onPointerUp={() => setTransmit(false)}
+          onPointerCancel={() => setTransmit(false)}
+          onLostPointerCapture={() => setTransmit(false)}
+        >{transmitting ? '说话中…' : `按住${vkName(snapshot.voice.ptt_key_vk)}说话`}</button>
+      )}
+      <span className="level-meter" aria-label="麦克风电平"><span className="level-fill" style={{ width: `${Math.min(100, Math.round(levels.mic * 300))}%` }} /></span>
+      <span className="talkers">{talking.size ? [...talking.values()].join('、') : '无人说话'}</span>
+    </footer>
+  )
+
+  // 第 3 项：设置视图。连接中嵌在顶栏/状态栏之间；未连接时整页显示。
+  if (page === 'settings') {
+    const settingsView = <SettingsPage snapshot={snapshot} started={started} levels={levels} onBack={() => setPage('main')} />
+    if (!connected) return <>{noticeEl}{settingsView}</>
+    return (
+      <main className="app-shell">
+        {topbarEl}
+        <div className="settings-embed">{settingsView}</div>
+        {statusbarEl}
+        {noticeEl}
+      </main>
+    )
+  }
+
+  if (!connected) return <>{noticeEl}<ConnectForm snapshot={snapshot} levelUp={levelUp} levelRequired={levelRequired} onConnect={connect} onConnectBookmark={(b) => void connectBookmark(b)} onSave={save} onDelete={(id) => void removeBookmark(id)} onDismissLevel={() => { setLevelUp(null); setLevelRequired(null) }} onOpenSettings={openSettings} onStartUpgrade={() => {
     const target = levelRequired?.required
     setLevelRequired(null)
     if (target) void tauriInvoke('start_security_upgrade', { target }).catch((err) => setNotice(String(err).replace(/^Error:\s*/, '')))
@@ -1254,8 +1327,26 @@ function AppShell() {
 
   return (
     <main className="app-shell">
-      <header className="topbar"><div className={`status-dot ${snapshot.connection.status}`} /><div className="server-title"><strong>{snapshot.connection.server_name || 'TS3 服务器'}</strong><span>{snapshot.connection.server_address}</span></div><span className="status-text">{statusText(snapshot)}</span><button className="icon-button" onClick={() => void tauriInvoke('open_settings').catch((err) => { setNotice(String(err).replace(/^Error:\s*/, '')); setTimeout(() => setNotice(''), 3000) })} aria-label="打开设置">⚙</button><button className="icon-button" onClick={() => void disconnect()} aria-label="断开连接">×</button></header>
-      <div className="content-grid"><section className="panel channel-panel"><div className="panel-heading"><span>频道</span><span className="muted">{snapshot.channels.length}</span></div><ChannelTree channels={groupedChannels} talkingIds={talkingIds} onSelect={selectChannel} onClientContextMenu={(client, x, y) => setCtxMenu({ x, y, client })} /></section><ChatPanel tabs={chatTabs} ownChannelId={snapshot.own_channel_id} channels={groupedChannels} viewing={viewing} setViewing={setViewing} onNotice={(message) => { setNotice(message); setTimeout(() => setNotice(''), 3000) }} onRemoveTab={removeChatTab} /></div>
+      {topbarEl}
+      <div className="content-area">
+        <section className="panel channel-panel">
+          <div className="panel-heading"><span>频道</span><span className="muted">{snapshot.channels.length}</span></div>
+          <ChannelTree channels={groupedChannels} talkingIds={talkingIds} onSelect={selectChannel} onClientContextMenu={(client, x, y) => setCtxMenu({ x, y, client })} />
+        </section>
+        {/* 消息卡片：收起时滑出可视区（inert 防止焦点进入），布局内部沿用原消息框 */}
+        <div className={`chat-card ${chatOpen ? 'open' : ''}`} inert={!chatOpen}>
+          <ChatPanel tabs={chatTabs} ownChannelId={snapshot.own_channel_id} channels={groupedChannels} viewing={viewing} setViewing={setViewing} onNotice={(message) => { setNotice(message); setTimeout(() => setNotice(''), 3000) }} onRemoveTab={removeChatTab} />
+        </div>
+        <button
+          className={`chat-toggle ${chatOpen ? 'open' : ''}`}
+          onClick={() => setChatOpen((o) => !o)}
+          aria-label={chatOpen ? '收起消息' : '展开消息'}
+          title={chatOpen ? '收起消息' : '展开消息'}
+        >
+          {hasUnread && !chatOpen && <span className="chat-toggle-dot" aria-label="有未读消息" />}
+          <span className="chat-toggle-arrow" aria-hidden="true">{chatOpen ? '▾' : '▴'}</span>
+        </button>
+      </div>
       {ctxMenu && (
         <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} role="menu">
           <button role="menuitem" onClick={() => { const id = ctxMenu.client.id; setCtxMenu(null); void openPrivateChat(id) }}>
@@ -1263,15 +1354,7 @@ function AppShell() {
           </button>
         </div>
       )}
-      <footer className="statusbar"><button
-        className={`ptt-chip hold ${transmitting ? 'active' : ''}`}
-        disabled={!connected}
-        aria-label="按住说话"
-        onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); setTransmit(true) }}
-        onPointerUp={() => setTransmit(false)}
-        onPointerCancel={() => setTransmit(false)}
-        onLostPointerCapture={() => setTransmit(false)}
-      >{transmitting ? '说话中…' : '按住说话'}</button><span className="level-meter" aria-label="麦克风电平"><span className="level-fill" style={{ width: `${Math.min(100, Math.round(levels.mic * 300))}%` }} /></span><span className="talkers">{talking.size ? [...talking.values()].join('、') : '无人说话'}</span></footer>
+      {statusbarEl}
       {pwdPrompt && (
         <ChannelPasswordModal
           name={pwdPrompt.name}

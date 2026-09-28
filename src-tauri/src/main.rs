@@ -20,7 +20,7 @@ use std::sync::atomic::Ordering;
 use app_state::AppState;
 use conn::{connect, disconnect, get_app_snapshot, reconnect, select_channel};
 use persistence::{delete_bookmark, save_bookmark};
-use settings::{list_audio_devices, open_settings, set_audio_devices, set_ptt_key, set_vad_threshold, set_voice_mode};
+use settings::{list_audio_devices, set_audio_devices, set_ptt_key, set_vad_threshold, set_voice_mode};
 use tauri::Manager;
 
 fn main() {
@@ -49,7 +49,6 @@ fn main() {
             overlay::save_overlay_position,
             audio::set_transmit_enabled,
             set_ptt_key,
-            open_settings,
             set_voice_mode,
             set_vad_threshold,
             list_audio_devices,

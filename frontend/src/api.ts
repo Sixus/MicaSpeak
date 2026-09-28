@@ -71,3 +71,8 @@ export type LevelRequiredPayload = { required: number; have: number }
 export async function subscribeIdentityLevelRequired(onEvent: (payload: LevelRequiredPayload) => void): Promise<UnlistenFn> {
   return listen<LevelRequiredPayload>('identity://level-required', (event) => onEvent(event.payload))
 }
+
+// UI 改版：托盘"打开设置"→ Rust 显示主窗口并发此事件，前端切换到内置设置视图。
+export async function subscribeOpenSettings(onOpen: () => void): Promise<UnlistenFn> {
+  return listen('app://open-settings', onOpen)
+}

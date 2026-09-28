@@ -15,9 +15,9 @@
         "label": "main",
         "title": "MicaSpeak",
         "width": 420,
-        "height": 640,
+        "height": 680,
         "minWidth": 360,
-        "minHeight": 520,
+        "minHeight": 620,
         "resizable": true,
         "transparent": true
       }

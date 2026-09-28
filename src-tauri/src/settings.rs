@@ -3,7 +3,7 @@
 
 use cpal::traits::{DeviceTrait, HostTrait};
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, State};
 use tracing::info;
 
 use crate::app_state::AppState;
@@ -35,25 +35,17 @@ pub async fn set_ptt_key(
     Ok(())
 }
 
-/// 打开设置窗口（520×640，按需创建；已存在则聚焦）。复用同一后端状态。
-/// M5a：透明窗口 + 与主窗口同一材质决策（Mica 成功时设置页底面也是 Mica；
-/// 实体回退时 CSS 保持不透明，透明属性无副作用）。
-#[tauri::command]
-pub async fn open_settings(app: AppHandle) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window("settings") {
-        let _ = win.set_focus();
-        return Ok(());
-    }
-    let win = WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("index.html".into()))
-        .title("MicaSpeak 设置")
-        .inner_size(520.0, 640.0)
-        .min_inner_size(460.0, 520.0)
-        .transparent(true)
-        .build()
-        .map_err(|e| format!("打开设置窗口失败：{e}"))?;
-    let state = app.state::<AppState>();
-    crate::material::apply_to_secondary_window(&state.material, &win);
-    Ok(())
+/// UI 改版：设置已集成进主窗口，不再创建独立设置窗口。
+/// 显示并聚焦主窗口，广播 app://open-settings 让前端切到内置设置视图。
+/// 托盘"打开设置"调用；前端 ⚙/连接页入口直接走页内切换，不经过这里。
+pub fn open_settings(app: &AppHandle) -> Result<(), String> {
+    use tauri::{Emitter, Manager};
+    let win = app.get_webview_window("main").ok_or("主窗口不存在")?;
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+    app.emit_to("main", "app://open-settings", ())
+        .map_err(|e| format!("通知主窗口打开设置失败：{e}"))
 }
 
 /// 修改语音模式与/或降噪开关；非 None 的字段才更新。
