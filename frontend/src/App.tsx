@@ -282,9 +282,9 @@ function AboutSection({ snapshot, showNotice }: { snapshot: AppSnapshot; showNot
   )
 }
 
-// embedded：嵌入主窗口内容区（连接中，顶栏/状态栏保留）；否则整页显示（未连接时）。
-// onBack：左上角常驻返回按钮（sticky，滚动时始终可见）。
-function SettingsPage({ snapshot, started, levels, onBack }: { snapshot: AppSnapshot; started: boolean; levels: LevelPayload; onBack: () => void }) {
+// embedded：嵌入主窗口内容区（连接中，返回图标在顶栏原服务器信息位，
+// 设置视图不显示服务器信息）；未连接时整页显示，backButton 为左上角常驻返回图标。
+function SettingsPage({ snapshot, started, levels, backButton }: { snapshot: AppSnapshot; started: boolean; levels: LevelPayload; backButton?: ReactNode }) {
   const [capturing, setCapturing] = useState(false)
   const [notice, setNotice] = useState('')
   const [devices, setDevices] = useState<{ inputs: string[]; outputs: string[] }>({ inputs: [], outputs: [] })
@@ -353,9 +353,7 @@ function SettingsPage({ snapshot, started, levels, onBack }: { snapshot: AppSnap
   const probPct = Math.min(100, Math.round((levels.prob || 0) * 100))
   return (
     <main className="settings-page">
-      <button className="settings-back" type="button" onClick={onBack} aria-label="返回主界面">
-        <span className="settings-back-arrow">‹</span>返回
-      </button>
+      {backButton}
       <header className="settings-header"><strong>设置</strong><span>语音与按键</span></header>
 
       <section className="settings-card">
@@ -1267,6 +1265,16 @@ function AppShell() {
       window.removeEventListener('keydown', onKey)
     }
   }, [ctxMenu])
+  // 消息卡片展开时，点击卡片外任意处收回（卡片内部点按不收，收回按钮自己处理）
+  useEffect(() => {
+    if (!chatOpen) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.target instanceof Element && e.target.closest('.chat-card')) return
+      setChatOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown, true)
+    return () => window.removeEventListener('pointerdown', onPointerDown, true)
+  }, [chatOpen])
   const removeChatTab = (target: ViewingTarget) => {
     setChatTabs((prev) => prev.filter((t) => !(t.kind === target.kind && t.target_id === target.id)))
   }
@@ -1305,13 +1313,29 @@ function AppShell() {
     </footer>
   )
 
-  // 第 3 项：设置视图。连接中嵌在顶栏/状态栏之间；未连接时整页显示。
+  // 第 3 项：设置视图。连接中嵌在顶栏/状态栏之间，返回图标放顶栏原服务器信息位
+  //（风格与 ⚙/× 一致，此视图不显示服务器信息）；未连接时整页显示，左上角常驻返回图标。
   if (page === 'settings') {
-    const settingsView = <SettingsPage snapshot={snapshot} started={started} levels={levels} onBack={() => setPage('main')} />
+    const settingsView = (
+      <SettingsPage
+        snapshot={snapshot}
+        started={started}
+        levels={levels}
+        backButton={!connected ? (
+          <button className="icon-button settings-back-icon" onClick={() => setPage('main')} aria-label="返回主界面" title="返回">←</button>
+        ) : undefined}
+      />
+    )
     if (!connected) return <>{noticeEl}{settingsView}</>
     return (
       <main className="app-shell">
-        {topbarEl}
+        <header className="topbar">
+          <button className="icon-button" onClick={() => setPage('main')} aria-label="返回主界面" title="返回">←</button>
+          <span className={`status-dot ${snapshot.connection.status}`} />
+          <span className="status-text">{statusText(snapshot)}</span>
+          <div className="flex-spacer" />
+          <button className="icon-button" onClick={() => void disconnect()} aria-label="断开连接">×</button>
+        </header>
         <div className="settings-embed">{settingsView}</div>
         {statusbarEl}
         {noticeEl}
@@ -1333,19 +1357,20 @@ function AppShell() {
           <div className="panel-heading"><span>频道</span><span className="muted">{snapshot.channels.length}</span></div>
           <ChannelTree channels={groupedChannels} talkingIds={talkingIds} onSelect={selectChannel} onClientContextMenu={(client, x, y) => setCtxMenu({ x, y, client })} />
         </section>
-        {/* 消息卡片：收起时滑出可视区（inert 防止焦点进入），布局内部沿用原消息框 */}
+        {/* 消息卡片：默认收起滑出可视区（inert 防止焦点进入）；展开后贴住底边，
+            收回按钮在卡片顶端，点击卡片外任意处也收回。布局内部沿用原消息框 */}
         <div className={`chat-card ${chatOpen ? 'open' : ''}`} inert={!chatOpen}>
+          <button className="chat-collapse" onClick={() => setChatOpen(false)} aria-label="收起消息" title="收起消息">
+            <span className="chat-toggle-arrow" aria-hidden="true">▾</span>
+          </button>
           <ChatPanel tabs={chatTabs} ownChannelId={snapshot.own_channel_id} channels={groupedChannels} viewing={viewing} setViewing={setViewing} onNotice={(message) => { setNotice(message); setTimeout(() => setNotice(''), 3000) }} onRemoveTab={removeChatTab} />
         </div>
-        <button
-          className={`chat-toggle ${chatOpen ? 'open' : ''}`}
-          onClick={() => setChatOpen((o) => !o)}
-          aria-label={chatOpen ? '收起消息' : '展开消息'}
-          title={chatOpen ? '收起消息' : '展开消息'}
-        >
-          {hasUnread && !chatOpen && <span className="chat-toggle-dot" aria-label="有未读消息" />}
-          <span className="chat-toggle-arrow" aria-hidden="true">{chatOpen ? '▾' : '▴'}</span>
-        </button>
+        {!chatOpen && (
+          <button className="chat-toggle" onClick={() => setChatOpen(true)} aria-label="展开消息" title="展开消息">
+            {hasUnread && <span className="chat-toggle-dot" aria-label="有未读消息" />}
+            <span className="chat-toggle-arrow" aria-hidden="true">▴</span>
+          </button>
+        )}
       </div>
       {ctxMenu && (
         <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} role="menu">
