@@ -4,7 +4,7 @@ use crate::audio::AudioManager;
 use crate::chat::{ChatStore, ChatUpdate};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
@@ -54,6 +54,11 @@ pub struct AppState {
     /// M5b B2 连接意图代数：用户手动连接/断开时 +1；自动重连任务以此
     /// 检测"用户已介入"并取消自己。
     pub reconnect_epoch: Arc<AtomicU64>,
+    /// M7a 重连单飞闸门：true = 已有一条重连任务链在跑。连接意外死亡的
+    /// driver_loop 退出路径都会尝试拉起重连，闸门保证全进程同时只有一条
+    /// 链，防止任务链增殖（链自身只在用户介入或观察到成功时退出，网络
+    /// 抖动期会一夜增殖数百条——10.5GB 日志事故的根因）。
+    pub reconnect_pending: Arc<AtomicBool>,
     /// M6b 安全等级进度打点代数：新事件/结束时 +1，旧打点任务退出。
     pub level_up_epoch: Arc<AtomicU64>,
     /// M6b 手动升级取消标志（分级推进，块间检查）。
@@ -104,6 +109,7 @@ impl AppState {
             active: Arc::new(Mutex::new(None)),
             next_conn_id: Arc::new(AtomicU64::new(0)),
             reconnect_epoch: Arc::new(AtomicU64::new(0)),
+            reconnect_pending: Arc::new(AtomicBool::new(false)),
             level_up_epoch: Arc::new(AtomicU64::new(0)),
             security_upgrade_cancel: Arc::new(AtomicU64::new(0)),
             audio: AudioManager::new(),

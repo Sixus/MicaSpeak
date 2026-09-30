@@ -688,6 +688,20 @@ async fn driver_loop(
             // 封禁），等用户在界面上点「提升安全等级」后由前端发起重连。
             info!("连接被安全等级门槛拦下，等待用户升级身份后重连");
         } else {
+            // M7a：先把"已断开"写进连接状态再拉重连。单飞闸门下可能已有一条
+            // 重连链在轮询 status 等结果（本次拉起会被闸门跳过），若不写，
+            // 链会把残留的 "connected" 误读成重连成功而提前退场，这条已死的
+            // 连接之后就没人管了。
+            {
+                let payload = ConnectionPayload {
+                    status: "disconnected".into(),
+                    reason: Some("连接意外断开，准备自动重连".into()),
+                    server_name: None,
+                    server_address: Some(address.clone()),
+                };
+                *state.connection.lock().await = payload.clone();
+                let _ = app.emit("connection://state", payload);
+            }
             arm_reconnect(app, state, address).await;
         }
     } else {
@@ -791,9 +805,23 @@ async fn wait_epoch(state: &AppState, wait_secs: u64, epoch: u64) -> bool {
 /// 退避重连；连接参数复用断开前的 active，频道用 config.last_channel 恢复
 /// （select_channel 成功时会同步写回，见 save_last_channel）。恢复音频流由
 /// publish_state → ensure_started 完成。用户随时可手动连接/断开接管（epoch）。
+///
+/// M7a 单飞闸门：driver_loop 的意外退出路径每次都会走到这里，若无闸门，
+/// 每次连接死亡都会 spawn 一条新的重连任务链；链只在用户介入（epoch 变化）
+/// 或观察到成功时退出——网络抖动期刚连上的连接会被其他链的下一次尝试经
+/// disconnect_inner 杀掉，"成功"永远观察不到，任务链只增不减。实测
+/// 2026-09-30 事故：一夜增殖数百条链（日志中第 53~478 次序号交错）、
+/// 取消/成功计数为 0，各自按 5~60 秒无限重连，配合三方库 DEBUG 日志刷出
+/// 10.5GB。闸门保证全进程同时只有一条链；并发死亡由 driver_loop 先写入
+/// disconnected 状态、运行中的链轮询到后自行推进，不会漏接。
 async fn arm_reconnect(app: AppHandle, state: AppState, address: String) {
+    if state.reconnect_pending.swap(true, Ordering::SeqCst) {
+        debug!("已有自动重连任务链在跑，跳过重复拉起");
+        return;
+    }
     let epoch = state.reconnect_epoch.load(Ordering::Relaxed);
     tauri::async_runtime::spawn(async move {
+        let _gate = ReconnectGate(state.clone());
         let mut attempt: usize = 0;
         loop {
             attempt += 1;
@@ -850,6 +878,15 @@ async fn arm_reconnect(app: AppHandle, state: AppState, address: String) {
             }
         }
     });
+}
+
+/// M7a：重连链退出（成功/取消/没有书签中止）时复位单飞闸门。
+/// Drop 覆盖任务体里所有 return 路径，不会漏。
+struct ReconnectGate(AppState);
+impl Drop for ReconnectGate {
+    fn drop(&mut self) {
+        self.0.reconnect_pending.store(false, Ordering::SeqCst);
+    }
 }
 
 async fn publish_state(
