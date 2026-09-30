@@ -641,7 +641,7 @@ function formatTime(ms: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-function ChatPanel({ tabs, ownChannelId, channels, viewing, setViewing, onNotice, onRemoveTab }: {
+function ChatPanel({ tabs, ownChannelId, channels, viewing, setViewing, onNotice, onRemoveTab, onClose }: {
   tabs: ChatTabView[]
   ownChannelId: number
   channels: ChannelNode[]
@@ -649,6 +649,7 @@ function ChatPanel({ tabs, ownChannelId, channels, viewing, setViewing, onNotice
   setViewing: (target: ViewingTarget | null) => void
   onNotice: (message: string) => void
   onRemoveTab: (target: ViewingTarget) => void
+  onClose: () => void
 }) {
   const activeTarget: ViewingTarget = viewing ?? { kind: 'channel', id: ownChannelId }
   const activeTab = tabs.find((t) => t.kind === activeTarget.kind && t.target_id === activeTarget.id) ?? null
@@ -768,6 +769,8 @@ function ChatPanel({ tabs, ownChannelId, channels, viewing, setViewing, onNotice
           )
         })}
         {!channelTabs.length && !privateTabs.length && <button className="tab active">频道</button>}
+        {/* 四轮：关闭弹层 = 标签行右端小 ×（顶部收回把手已删） */}
+        <button className="chat-close" onClick={onClose} aria-label="收起消息弹层" title="收起">×</button>
       </div>
       <div className="chat-messages" ref={listRef} onScroll={onScroll}>
         {messages.map((m) => (
@@ -958,6 +961,7 @@ function ConnectForm({ snapshot, levelUp, levelRequired, onConnect, onConnectBoo
           <BookmarkRow
             key={bookmark.id}
             bookmark={bookmark}
+            remark={(snapshot.server_remarks ?? {})[bookmark.address] ?? null}
             onConnect={() => onConnectBookmark(bookmark)}
             onDelete={() => onDelete(bookmark.id)}
           />
@@ -975,15 +979,17 @@ function ConnectForm({ snapshot, levelUp, levelRequired, onConnect, onConnectBoo
   )
 }
 
-function BookmarkRow({ bookmark, onConnect, onDelete }: { bookmark: Bookmark; onConnect: () => void; onDelete: () => void }) {
+function BookmarkRow({ bookmark, remark, onConnect, onDelete }: { bookmark: Bookmark; remark: string | null; onConnect: () => void; onDelete: () => void }) {
+  // 四轮：收藏名 = "服务器备注·昵称"（无备注时只显示昵称）。
+  const displayName = remark ? `${remark}·${bookmark.nickname}` : bookmark.nickname
   return (
     <div className="bookmark-row">
       <button className="bookmark-main" onClick={onConnect} title="单击连接">
         <span className="bookmark-icon">★</span>
-        <span className="bookmark-text"><strong>{bookmark.nickname}</strong><small>{bookmark.address}</small></span>
+        <span className="bookmark-text"><strong>{displayName}</strong><small>{bookmark.address}</small></span>
         <span className="bookmark-arrow">›</span>
       </button>
-      <button className="bookmark-delete" aria-label={`删除书签 ${bookmark.nickname}`} title="删除书签" onClick={onDelete}>×</button>
+      <button className="bookmark-delete" aria-label={`删除书签 ${displayName}`} title="删除书签" onClick={onDelete}>×</button>
     </div>
   )
 }
@@ -1197,6 +1203,25 @@ function AppShell() {
 
   const connected = snapshot.connection.status === 'connected'
   const groupedChannels = useMemo(() => snapshot.channels, [snapshot.channels])
+  // 四轮：频道在线人数 = 各频道客户端总数（含自己）。
+  const onlineCount = useMemo(() => snapshot.channels.reduce((n, c) => n + c.clients.length, 0), [snapshot.channels])
+  // 四轮：服务器备注——顶栏点服务器名编辑，按连接地址存 config；
+  // 顶栏与收藏名（"备注·昵称"）都用它显示，留空恢复默认。
+  const [editingRemark, setEditingRemark] = useState(false)
+  const [remarkDraft, setRemarkDraft] = useState('')
+  const serverRemarks = snapshot.server_remarks ?? {}
+  const serverAddress = snapshot.connection.server_address ?? ''
+  const serverDisplay = serverRemarks[serverAddress] || snapshot.connection.server_name || 'TS3 服务器'
+  const startRemarkEdit = () => { setRemarkDraft(serverRemarks[serverAddress] ?? ''); setEditingRemark(true) }
+  const saveRemark = () => {
+    setEditingRemark(false)
+    if (!serverAddress) return
+    const next = remarkDraft.trim()
+    if (next === (serverRemarks[serverAddress] ?? '')) return
+    void tauriInvoke('set_server_remark', { address: serverAddress, remark: next })
+      .then(() => { setNotice(next ? '服务器备注已保存' : '服务器备注已清除'); setTimeout(() => setNotice(''), 1800) })
+      .catch((err) => { setNotice(String(err).replace(/^Error:\s*/, '')); setTimeout(() => setNotice(''), 3000) })
+  }
   const talkingIds = useMemo(() => new Set(talking.keys()), [talking])
   const connect = async (address: string, nickname: string, password: string) => {
     await tauriInvoke('connect', { address, nickname, password: password || null, bookmarkId: null })
@@ -1287,7 +1312,25 @@ function AppShell() {
   const topbarEl = (
     <header className="topbar">
       <div className={`status-dot ${snapshot.connection.status}`} />
-      <div className="server-title"><strong>{snapshot.connection.server_name || 'TS3 服务器'}</strong><span>{snapshot.connection.server_address}</span></div>
+      <div className="server-title">
+        {editingRemark ? (
+          <input
+            className="remark-input"
+            value={remarkDraft}
+            autoFocus
+            placeholder="服务器备注（留空恢复默认）"
+            onChange={(e) => setRemarkDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); saveRemark() }
+              if (e.key === 'Escape') setEditingRemark(false)
+            }}
+            onBlur={saveRemark}
+          />
+        ) : (
+          <strong className="server-name" onClick={startRemarkEdit} title="点击修改服务器备注">{serverDisplay}</strong>
+        )}
+        <span>{snapshot.connection.server_address}</span>
+      </div>
       <span className="status-text">{statusText(snapshot)}</span>
       <button className="icon-button" onClick={openSettings} aria-label="打开设置">⚙</button>
       <button className="icon-button" onClick={() => void disconnect()} aria-label="断开连接">×</button>
@@ -1343,16 +1386,13 @@ function AppShell() {
       {topbarEl}
       <div className="content-area">
         <section className="panel channel-panel">
-          <div className="panel-heading"><span>频道</span><span className="muted">{snapshot.channels.length}</span></div>
+          <div className="panel-heading"><span>频道</span><span className="muted">在线人数 {onlineCount} 人</span></div>
           <ChannelTree channels={groupedChannels} talkingIds={talkingIds} onSelect={selectChannel} onClientContextMenu={(client, x, y) => setCtxMenu({ x, y, client })} />
         </section>
-        {/* 消息卡片：默认收起滑出可视区（inert 防止焦点进入）；展开后贴住底边，
-            收回按钮在卡片顶端，点击卡片外任意处也收回。布局内部沿用原消息框 */}
+        {/* 消息卡片：默认收起滑出可视区（inert 防止焦点进入）；展开后贴住底边、
+            顶部直角呈现从下方弹出效果；点标签行右端 × 或卡片外任意处收回 */}
         <div className={`chat-card ${chatOpen ? 'open' : ''}`} inert={!chatOpen}>
-          <button className="chat-collapse" onClick={() => setChatOpen(false)} aria-label="收起消息" title="收起消息">
-            <span className="chat-toggle-arrow" aria-hidden="true">▾</span>
-          </button>
-          <ChatPanel tabs={chatTabs} ownChannelId={snapshot.own_channel_id} channels={groupedChannels} viewing={viewing} setViewing={setViewing} onNotice={(message) => { setNotice(message); setTimeout(() => setNotice(''), 3000) }} onRemoveTab={removeChatTab} />
+          <ChatPanel tabs={chatTabs} ownChannelId={snapshot.own_channel_id} channels={groupedChannels} viewing={viewing} setViewing={setViewing} onNotice={(message) => { setNotice(message); setTimeout(() => setNotice(''), 3000) }} onRemoveTab={removeChatTab} onClose={() => setChatOpen(false)} />
         </div>
         {!chatOpen && (
           <button className="chat-toggle" onClick={() => setChatOpen(true)} aria-label="展开消息" title="展开消息">

@@ -156,9 +156,9 @@ impl AppState {
         };
         let material = self.material.get();
         // M6a：身份列表视图（脱敏，无密钥材料）。
-        let identities = {
+        let (identities, server_remarks) = {
             let config = self.config.lock().await;
-            crate::identity::list_views(&config)
+            (crate::identity::list_views(&config), config.server_remarks.clone())
         };
         AppSnapshot {
             connection,
@@ -174,6 +174,7 @@ impl AppState {
             material: material.to_string(),
             webview2_version: self.webview2.version.clone(),
             identities,
+            server_remarks,
         }
     }
 

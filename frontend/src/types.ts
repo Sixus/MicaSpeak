@@ -99,6 +99,8 @@ export type AppSnapshot = {
   webview2_version?: string | null
   /** M6a：身份列表（脱敏）；旧后端缺省 undefined */
   identities?: IdentityView[]
+  /** 四轮：服务器备注表（键=连接地址字符串）；旧后端缺省 undefined */
+  server_remarks?: Record<string, string>
 }
 
 export const emptySnapshot: AppSnapshot = {

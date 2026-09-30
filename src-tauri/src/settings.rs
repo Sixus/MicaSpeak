@@ -48,6 +48,29 @@ pub fn open_settings(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| format!("通知主窗口打开设置失败：{e}"))
 }
 
+/// 设置/清除服务器备注（三轮：键=连接地址字符串，空串=清除）。
+/// 用于主界面顶栏显示与收藏名（"备注·昵称"）。
+#[tauri::command]
+pub async fn set_server_remark(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    address: String,
+    remark: String,
+) -> Result<(), String> {
+    let remark = remark.trim().to_string();
+    {
+        let mut config = state.config.lock().await;
+        if remark.is_empty() {
+            config.server_remarks.remove(&address);
+        } else {
+            config.server_remarks.insert(address, remark);
+        }
+        save_config(&config).map_err(|e| format!("保存配置失败：{e}"))?;
+    }
+    state.emit_snapshot(&app).await;
+    Ok(())
+}
+
 /// 修改语音模式与/或降噪开关；非 None 的字段才更新。
 /// 热生效：保存配置 → 同步参数 → 只重建音频流（不重连服务器）。
 #[tauri::command]

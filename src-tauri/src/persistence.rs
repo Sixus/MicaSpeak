@@ -29,6 +29,10 @@ pub struct AppConfig {
     /// 由 identity::init_storage 补齐。
     #[serde(default)]
     pub active_identity: Option<String>,
+    /// 三轮：服务器备注（按连接地址字符串为键，用于顶栏显示与收藏名）；
+    /// 旧配置缺省为空表。
+    #[serde(default)]
+    pub server_remarks: std::collections::BTreeMap<String, String>,
 }
 
 fn default_voice_mode() -> String {

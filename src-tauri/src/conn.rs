@@ -76,6 +76,8 @@ pub struct AppSnapshot {
     pub webview2_version: Option<String>,
     /// M6a 身份列表（脱敏视图：id/昵称/脱敏 uid/等级/是否当前）。
     pub identities: Vec<crate::identity::IdentityView>,
+    /// 三轮：服务器备注表（键=连接地址字符串；顶栏显示与收藏名用）。
+    pub server_remarks: std::collections::BTreeMap<String, String>,
 }
 
 pub enum ConnCommand {
