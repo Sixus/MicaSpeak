@@ -1,6 +1,6 @@
 [package]
 name = "micaspeak"
-version = "0.1.0"
+version = "1.0.0"
 description = "MicaSpeak TS3 client"
 authors = ["MicaSpeak"]
 edition = "2021"
