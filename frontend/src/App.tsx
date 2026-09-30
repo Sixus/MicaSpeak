@@ -1366,7 +1366,9 @@ function AppShell() {
           <div className="flex-spacer" />
           <button className="icon-button" onClick={() => void tauriInvoke('disconnect').catch(() => {})} aria-label="断开连接">×</button>
         </header>
-        <div className="settings-embed">
+        {/* key 强区分两视图：不加 key 时 React 复用同一 div 节点，
+            设置页的滚动位置会被带进主界面（返回后频道框错位 bug） */}
+        <div className="settings-embed" key="settings">
           <SettingsPage snapshot={snapshot} started={started} levels={levels} />
         </div>
         {statusbarEl}
@@ -1384,7 +1386,7 @@ function AppShell() {
   return (
     <main className="app-shell">
       {topbarEl}
-      <div className="content-area">
+      <div className="content-area" key="main">
         <section className="panel channel-panel">
           <div className="panel-heading"><span>频道</span><span className="muted">在线人数 {onlineCount} 人</span></div>
           <ChannelTree channels={groupedChannels} talkingIds={talkingIds} onSelect={selectChannel} onClientContextMenu={(client, x, y) => setCtxMenu({ x, y, client })} />
