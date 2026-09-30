@@ -166,8 +166,10 @@ button:disabled { cursor: default; opacity: .55; }
   .ctx-menu button:hover { background: rgba(75,163,232,.16); }
 }
 
-/* 三轮：悬浮窗——高度随说话人数（每人一行），非编辑模式无左侧把手 */
-.overlay-pill { width: 260px; display: flex; flex-direction: column; overflow: hidden; border-radius: 10px; background: rgba(0,0,0,0.72); box-shadow: 0 10px 30px -8px rgba(0,0,0,0.6); color: #fff; }
+/* 三轮：悬浮窗——高度随说话人数（每人一行），非编辑模式无左侧把手。
+   无投影：窗口比药丸高几像素，阴影会被窗口边界裁成一条硬边黑带（实机踩过），
+   药丸本身半透明黑底已有足够对比度。 */
+.overlay-pill { width: 260px; display: flex; flex-direction: column; overflow: hidden; border-radius: 10px; background: rgba(0,0,0,0.72); color: #fff; }
 .overlay-pill.editing { outline: 2px dashed rgba(0,140,255,.85); outline-offset: -2px; }
 .overlay-editbar { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 8px; background: rgba(0,120,212,.85); font-size: 11px; }
 .overlay-done { padding: 2px 10px; border: 0; border-radius: 4px; background: rgba(255,255,255,.92); color: #1a1a1a; font-size: 11px; font-weight: 600; }
