@@ -108,7 +108,7 @@ PowerShell 校验：Get-FileHash .\MicaSpeak.exe -Algorithm SHA256
    启用失败时自动回退实体背景。启动参数 --force-fallback 可强制实体背景。
 
 【第三方许可】
-许可见 LICENSES\THIRD-PARTY-NOTICES.txt 与 LICENSES	exts\。
+许可见 LICENSES\THIRD-PARTY-NOTICES.txt 与 LICENSES\texts\。
 "@
 $readme | Out-File -FilePath (Join-Path $appDir 'README.txt') -Encoding utf8
 
