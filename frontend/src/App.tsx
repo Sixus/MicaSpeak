@@ -282,9 +282,8 @@ function AboutSection({ snapshot, showNotice }: { snapshot: AppSnapshot; showNot
   )
 }
 
-// embedded：嵌入主窗口内容区（连接中，返回图标在顶栏原服务器信息位，
-// 设置视图不显示服务器信息）；未连接时整页显示，backButton 为左上角常驻返回图标。
-function SettingsPage({ snapshot, started, levels, backButton }: { snapshot: AppSnapshot; started: boolean; levels: LevelPayload; backButton?: ReactNode }) {
+// 嵌入主窗口内容区：顶栏（← 设置 ×）由 AppShell 统一渲染，这里只渲染卡片流。
+function SettingsPage({ snapshot, started, levels }: { snapshot: AppSnapshot; started: boolean; levels: LevelPayload }) {
   const [capturing, setCapturing] = useState(false)
   const [notice, setNotice] = useState('')
   const [devices, setDevices] = useState<{ inputs: string[]; outputs: string[] }>({ inputs: [], outputs: [] })
@@ -353,9 +352,6 @@ function SettingsPage({ snapshot, started, levels, backButton }: { snapshot: App
   const probPct = Math.min(100, Math.round((levels.prob || 0) * 100))
   return (
     <main className="settings-page">
-      {backButton}
-      <header className="settings-header"><strong>设置</strong><span>语音与按键</span></header>
-
       <section className="settings-card">
         <div className="section-label">按住说话（PTT）</div>
         <div className="setting-row">
@@ -1048,9 +1044,12 @@ function OverlayPage() {
         </div>
       )}
       <div className="overlay-body">
-        <div className="overlay-handle" onPointerDown={onHandlePointerDown} title={state.editing ? '拖动调整位置' : undefined}>
-          <span />
-        </div>
+        {/* 把手仅编辑模式渲染：平时悬浮窗无白条、不可拖动 */}
+        {state.editing && (
+          <div className="overlay-handle" onPointerDown={onHandlePointerDown} title="拖动调整位置">
+            <span />
+          </div>
+        )}
         <div className="overlay-speakers">
           {state.talkers.length
             ? state.talkers.map((n) => (
@@ -1313,30 +1312,20 @@ function AppShell() {
     </footer>
   )
 
-  // 第 3 项：设置视图。连接中嵌在顶栏/状态栏之间，返回图标放顶栏原服务器信息位
-  //（风格与 ⚙/× 一致，此视图不显示服务器信息）；未连接时整页显示，左上角常驻返回图标。
+  // 第 3 项+三轮：设置视图统一为 app-shell——顶栏 ← 设置 ×，与连接状态无关
+  //（断开后顶栏保持一致，× 为无操作）；内容区滚动，状态栏保留。
   if (page === 'settings') {
-    const settingsView = (
-      <SettingsPage
-        snapshot={snapshot}
-        started={started}
-        levels={levels}
-        backButton={!connected ? (
-          <button className="icon-button settings-back-icon" onClick={() => setPage('main')} aria-label="返回主界面" title="返回">←</button>
-        ) : undefined}
-      />
-    )
-    if (!connected) return <>{noticeEl}{settingsView}</>
     return (
       <main className="app-shell">
         <header className="topbar">
           <button className="icon-button" onClick={() => setPage('main')} aria-label="返回主界面" title="返回">←</button>
-          <span className={`status-dot ${snapshot.connection.status}`} />
-          <span className="status-text">{statusText(snapshot)}</span>
+          <strong className="page-title">设置</strong>
           <div className="flex-spacer" />
-          <button className="icon-button" onClick={() => void disconnect()} aria-label="断开连接">×</button>
+          <button className="icon-button" onClick={() => void tauriInvoke('disconnect').catch(() => {})} aria-label="断开连接">×</button>
         </header>
-        <div className="settings-embed">{settingsView}</div>
+        <div className="settings-embed">
+          <SettingsPage snapshot={snapshot} started={started} levels={levels} />
+        </div>
         {statusbarEl}
         {noticeEl}
       </main>

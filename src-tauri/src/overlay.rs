@@ -109,6 +109,12 @@ pub async fn overlay_task(app: AppHandle, state: AppState) {
         if signature == last_signature {
             continue;
         }
+        // 高度随说话人数变化（每人一行 ≈26 逻辑px；编辑模式多一条提示栏）。
+        // 内容 CSS 自适应，窗口略高于内容几像素，多余部分透明；位置锚定
+        // 窗口左上角，缩放高度不影响已保存的位置。
+        let rows = names.len().max(1) as f64;
+        let height = if editing { 44.0 + rows * 26.0 } else { 12.0 + rows * 26.0 };
+        let _ = win.set_size(tauri::LogicalSize::new(260.0, height));
         if visible != state.overlay.visible.load(Ordering::Relaxed) {
             if visible {
                 let _ = win.show();
