@@ -104,8 +104,8 @@ PowerShell 校验：Get-FileHash .\MicaSpeak.exe -Algorithm SHA256
 1. 悬浮窗在独占全屏的游戏画面中不可见（Windows 系统限制）；无边框窗口化可正常显示。
 2. 当前台程序以管理员权限运行时，Windows UIPI 会阻止全局 PTT 热键生效；
    请以相同权限运行本应用，或改用窗口内按钮说话。
-3. Win11 使用 Mica 系统材质；Win10 或启用失败时自动回退实体背景。
-   启动参数 --force-fallback 可强制实体背景。
+3. Win11 22H2（build 22621+）使用 Acrylic 系统材质；Win10/22H2 以下或
+   启用失败时自动回退实体背景。启动参数 --force-fallback 可强制实体背景。
 
 【第三方许可】
 许可见 LICENSES\THIRD-PARTY-NOTICES.txt 与 LICENSES	exts\。
