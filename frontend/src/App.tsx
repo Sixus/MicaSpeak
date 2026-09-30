@@ -499,7 +499,7 @@ function SettingsPage({ snapshot, started, levels }: { snapshot: AppSnapshot; st
           <span className="material-value">{snapshot.material ?? '实体'}</span>
         </div>
         <div className="setting-hint">
-          Windows 11 上使用 Mica 系统材质；不支持或启用失败时自动回退实体背景。启动参数 --force-fallback 可强制实体。
+          Windows 11 22H2 上使用 Acrylic 系统材质；不支持或启用失败时自动回退实体背景。启动参数 --force-fallback 可强制实体。
         </div>
       </section>
 
@@ -1101,9 +1101,9 @@ function AppShell() {
     [chatTabs, viewing],
   )
 
-  // M5a：材质模式落成 data 属性，CSS 据此切换半透明（Mica）/不透明（实体）背景。
+  // M5a：材质模式落成 data 属性，CSS 据此切换半透明（Acrylic）/不透明（实体）背景。
   useEffect(() => {
-    document.documentElement.dataset.material = snapshot.material === 'Mica' ? 'mica' : 'solid'
+    document.documentElement.dataset.material = snapshot.material === 'Acrylic' ? 'acrylic' : 'solid'
   }, [snapshot.material])
 
   useEffect(() => {

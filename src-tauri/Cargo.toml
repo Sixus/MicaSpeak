@@ -27,15 +27,17 @@ audiopus = "0.3.0-rc.0"
 cpal = "0.18"
 # M3 B：降噪与 VAD（任务卡白名单依赖，锁小版本）。
 nnnoiseless = "0.5.2"
-# M5 A：Win11 Mica 材质（docs/02 §2 选型：window-vibrancy + Windows API）。
-# apply_mica 失败/Win10/--force-fallback 时回退实体背景。
+# 窗口材质：ui-revamp 由 Mica 换系统 Acrylic（Mica 显色太淡）。apply_acrylic
+# 在 Win11 22H2+ 走 DWM 系统背衬（拖动流畅）；失败/22H2 以下/--force-fallback
+# 回退实体背景。
 window-vibrancy = "0.8"
 
 # M3：WH_KEYBOARD_LL 低级键盘钩子。复用 Cargo.lock 已有的 0.61.3，
-# 只开任务卡白名单的三个 feature（docs/07 提示词）。
+# feature 按任务卡白名单；ui-revamp 增开 Win32_Graphics_Dwm（材质深浅属性）。
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dwm",
     "Win32_System_Registry",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",

@@ -69,7 +69,7 @@ pub struct AppState {
     pub chat: ChatStore,
     /// M4c 悬浮窗会话事实（开关持久化在 config，编辑/可见是瞬态）。
     pub overlay: crate::overlay::OverlayState,
-    /// M5a 窗口材质事实（Mica/实体回退），进程内一次决策。
+    /// M5a 窗口材质事实（Acrylic/实体回退），进程内一次决策。
     pub material: crate::material::MaterialManager,
     /// 说话人状态：client_id -> 条目（标准互斥锁：会被音频事件任务同步访问）。
     talking: Arc<StdMutex<HashMap<u64, TalkerEntry>>>,

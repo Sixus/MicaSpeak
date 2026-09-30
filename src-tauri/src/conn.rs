@@ -70,7 +70,7 @@ pub struct AppSnapshot {
     pub own_channel_id: u64,
     pub chat: Vec<crate::chat::ChatTabView>,
     pub overlay_enabled: bool,
-    /// M5a 窗口材质："Mica" / "实体（回退：…）" / "实体（--force-fallback）"。
+    /// M5a 窗口材质："Acrylic" / "实体（回退：…）" / "实体（--force-fallback）"。
     pub material: String,
     /// M5c Evergreen WebView2 版本（缺省 None；向后兼容新字段）。
     pub webview2_version: Option<String>,

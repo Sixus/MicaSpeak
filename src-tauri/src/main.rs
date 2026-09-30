@@ -69,7 +69,7 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             let state = app.state::<AppState>().inner().clone();
-            // M5a：主窗口材质（Mica/实体回退）+ 系统深浅跟随。
+            // M5a：主窗口材质（Acrylic/实体回退）+ 系统深浅跟随。
             if let Err(e) = material::init_main_window_material(&state.material, &handle) {
                 log::warn!("窗口材质初始化失败：{e}");
             }

@@ -70,7 +70,7 @@ button:disabled { cursor: default; opacity: .55; }
 .chat-card { position: absolute; left: 12px; right: 12px; bottom: 0; height: calc((100% - 24px) * 2 / 3); min-height: 220px; z-index: 10; display: flex; transform: translateY(calc(100% + 28px)); opacity: 0; pointer-events: none; transition: transform .2s ease, opacity .2s ease; }
 .chat-card.open { transform: translateY(0); opacity: 1; pointer-events: auto; }
 .chat-card .chat-panel { flex: 1; min-height: 0; border-radius: 8px 8px 0 0; background: #fff; box-shadow: 0 14px 34px rgba(0,0,0,.22); }
-:root[data-material='mica'] .chat-card .chat-panel { background: #fff; }
+:root[data-material='acrylic'] .chat-card .chat-panel { background: #fff; }
 .chat-toggle { min-width: 76px; height: 20px; display: inline-flex; align-items: center; justify-content: center; padding: 2px 14px 0; border: 1px solid rgba(0,0,0,.12); border-bottom: 0; border-radius: 8px 8px 0 0; background: #fff; color: #5a5f66; font-size: 12px; line-height: 1; box-shadow: 0 -4px 12px rgba(0,0,0,.07); }
 .chat-toggle:hover { color: #1a1a1a; }
 .chat-toggle { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); z-index: 11; }
@@ -82,7 +82,7 @@ button:disabled { cursor: default; opacity: .55; }
   .chat-toggle { border-color: rgba(255,255,255,.14); background: #2b2b2b; color: rgba(255,255,255,.7); }
   .chat-toggle:hover { color: #fff; }
   .chat-card .chat-panel { background: #2b2b2b; box-shadow: 0 14px 34px rgba(0,0,0,.5); }
-  :root[data-material='mica'] .chat-card .chat-panel { background: #2b2b2b; }
+  :root[data-material='acrylic'] .chat-card .chat-panel { background: #2b2b2b; }
   .chat-close { color: rgba(255,255,255,.55); }
   .chat-close:hover { background: rgba(229,72,77,.16); color: #e5484d; }
 }
@@ -230,25 +230,25 @@ button:disabled { cursor: default; opacity: .55; }
    保证可读性。实体回退时保持原不透明背景，视觉不变。
    注意：html 自身的底色必须用 :root[...]（不能写 html[...] :root——
    :root 就是 html 本身，后代选择器永远匹配不到，会把 Mica 盖成不透明）。 */
-:root[data-material='mica'],
-:root[data-material='mica'] body { background: transparent; }
-:root[data-material='mica'] .app-shell,
-:root[data-material='mica'] .connect-page,
-:root[data-material='mica'] .loading-page,
-:root[data-material='mica'] .settings-page,
-:root[data-material='mica'] .runtime-page { background: transparent; }
+:root[data-material='acrylic'],
+:root[data-material='acrylic'] body { background: transparent; }
+:root[data-material='acrylic'] .app-shell,
+:root[data-material='acrylic'] .connect-page,
+:root[data-material='acrylic'] .loading-page,
+:root[data-material='acrylic'] .settings-page,
+:root[data-material='acrylic'] .runtime-page { background: transparent; }
 /* 顶栏/状态栏不属于卡片，也让 Mica 透出（只留分隔线） */
-:root[data-material='mica'] .topbar,
-:root[data-material='mica'] .statusbar { background: transparent; }
+:root[data-material='acrylic'] .topbar,
+:root[data-material='acrylic'] .statusbar { background: transparent; }
 /* 频道/私聊面板与表单卡片：浮在 Mica 上的半透明底 */
-:root[data-material='mica'] .panel,
-:root[data-material='mica'] .form-card,
-:root[data-material='mica'] .bookmarks { background: rgba(255,255,255,.55); }
+:root[data-material='acrylic'] .panel,
+:root[data-material='acrylic'] .form-card,
+:root[data-material='acrylic'] .bookmarks { background: rgba(255,255,255,.55); }
 .material-value { font-size: 13px; color: #262a30; }
 @media (prefers-color-scheme: dark) {
-  :root[data-material='mica'] .panel,
-  :root[data-material='mica'] .form-card,
-  :root[data-material='mica'] .bookmarks { background: rgba(43,43,43,.55); }
+  :root[data-material='acrylic'] .panel,
+  :root[data-material='acrylic'] .form-card,
+  :root[data-material='acrylic'] .bookmarks { background: rgba(43,43,43,.55); }
   .material-value { color: rgba(255,255,255,.85); }
 }
 

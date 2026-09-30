@@ -1,7 +1,8 @@
-//! M5 A：窗口材质（docs/09 阶段 A）。Win11（build ≥ 22000）对主窗口尝试
-//! apply_mica（window-vibrancy，docs/02 §2 选型）；失败、Win10 或
-//! `--force-fallback` 时使用实体背景（React 用不透明背景，窗口透明度由
-//! CSS 承担，视觉与普通窗口无差异）。
+//! 窗口材质：Win11 22H2（build ≥ 22621）对主窗口应用系统 Acrylic 背衬
+//! （DWMWA_SYSTEMBACKDROP_TYPE = DWMSBT_TRANSIENTWINDOW，经 window-vibrancy
+//! apply_acrylic 下发；docs/02 选型 Mica，实机验收显色过淡，经用户决定换
+//! Acrylic）。22H2 以下、失败或 `--force-fallback` 时使用实体背景
+//! （React 用不透明背景，窗口透明度由 CSS 承担，视觉与普通窗口无差异）。
 //!
 //! 深浅主题跟随系统：tauri 的 ThemeChanged 事件到达时按当前深浅重新着色。
 
@@ -11,11 +12,11 @@ use std::sync::Mutex as StdMutex;
 use tauri::{Manager, WebviewWindow};
 use tracing::info;
 
-/// 快照里的材质事实：material = "mica" | "solid"。
+/// 快照里的材质事实：material = "acrylic" | "solid"。
 #[derive(Clone, Debug, Serialize)]
 pub struct MaterialState {
     pub material: String,
-    /// 回退原因（mica 成功时为 None）。
+    /// 回退原因（acrylic 成功时为 None）。
     pub reason: Option<String>,
     pub force_fallback: bool,
 }
@@ -28,8 +29,8 @@ impl Default for MaterialState {
 
 impl fmt::Display for MaterialState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.material == "mica" {
-            write!(f, "Mica")
+        if self.material == "acrylic" {
+            write!(f, "Acrylic")
         } else if self.force_fallback {
             write!(f, "实体（--force-fallback）")
         } else if let Some(reason) = &self.reason {
@@ -53,8 +54,8 @@ impl MaterialManager {
     fn set(&self, state: MaterialState) {
         *self.state.lock().unwrap() = state;
     }
-    fn is_mica(&self) -> bool {
-        self.state.lock().unwrap().material == "mica"
+    fn is_acrylic(&self) -> bool {
+        self.state.lock().unwrap().material == "acrylic"
     }
 }
 
@@ -63,7 +64,7 @@ pub fn force_fallback_requested() -> bool {
     std::env::args().any(|a| a == "--force-fallback")
 }
 
-/// Windows 版本号（build），注册表直读；读取失败返回 None（视作不支持 Mica）。
+/// Windows 版本号（build），注册表直读；读取失败返回 None（视作不支持 Acrylic）。
 #[cfg(windows)]
 pub fn windows_build() -> Option<u32> {
     use windows::Win32::System::Registry::HKEY_LOCAL_MACHINE;
@@ -85,20 +86,41 @@ fn window_is_dark(window: &WebviewWindow) -> bool {
     window.theme().map(|t| t == tauri::Theme::Dark).unwrap_or(false)
 }
 
+/// 应用系统 Acrylic：immersive dark mode 由本模块直设（apply_acrylic 不代设，
+/// 缺了它暗色系统下材质仍是浅色），背衬经 window-vibrancy 下发——build ≥ 22523
+/// 走 DWMSBT_TRANSIENTWINDOW 系统背衬（拖动流畅），更老系统会走 AccentPolicy
+/// （拖动卡顿），由调用方的 22621 闸门排除。
+#[cfg(windows)]
+fn apply_acrylic_backdrop(window: &WebviewWindow, dark: bool) -> Result<(), String> {
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    let value: i32 = dark as i32;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            &value as *const i32 as *const std::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        )
+        .map_err(|e| format!("immersive dark mode 设置失败：{e}"))?;
+    }
+    window_vibrancy::apply_acrylic(window, None).map_err(|e| e.to_string())
+}
+
 /// 启动时对主窗口应用材质。幂等（重复调用安全：以首次决策为准更新事实）。
 pub fn apply_main_window_material(manager: &MaterialManager, window: &WebviewWindow) {
     let mut state = MaterialState { force_fallback: force_fallback_requested(), ..Default::default() };
     let build = windows_build();
     let dark = window_is_dark(window);
     #[cfg(windows)]
-    if !state.force_fallback && build.is_some_and(|b| b >= 22_000) {
-        match window_vibrancy::apply_mica(window, Some(dark)) {
+    if !state.force_fallback && build.is_some_and(|b| b >= 22_621) {
+        match apply_acrylic_backdrop(window, dark) {
             Ok(()) => {
-                state.material = "mica".into();
+                state.material = "acrylic".into();
                 state.reason = None;
             }
             Err(e) => {
-                state.reason = Some(format!("apply_mica 失败：{e}"));
+                state.reason = Some(format!("apply_acrylic 失败：{e}"));
             }
         }
     }
@@ -108,7 +130,7 @@ pub fn apply_main_window_material(manager: &MaterialManager, window: &WebviewWin
     }
     if state.material != "mica" && state.reason.is_none() && !state.force_fallback {
         state.reason = Some(match build {
-            Some(b) => format!("Windows build {b} < 22000"),
+            Some(b) => format!("Windows build {b} < 22621（Acrylic 需 Win11 22H2）"),
             None => "无法读取 Windows 版本".into(),
         });
     }
@@ -119,20 +141,20 @@ pub fn apply_main_window_material(manager: &MaterialManager, window: &WebviewWin
 /// 系统深浅切换（ThemeChanged）：Mica 生效时按新主题重新着色。
 /// 返回 true 表示重新应用了材质（调用方可决定是否刷新快照）。
 pub fn on_theme_changed(manager: &MaterialManager, window: &WebviewWindow) -> bool {
-    if !manager.is_mica() {
+    if !manager.is_acrylic() {
         return false;
     }
     let dark = window_is_dark(window);
     #[cfg(windows)]
     {
-        let _ = window_vibrancy::apply_mica(window, Some(dark));
+        let _ = apply_acrylic_backdrop(window, dark);
     }
-    info!(dark, "系统深浅切换，Mica 已重新着色");
+    info!(dark, "系统深浅切换，Acrylic 已重新着色");
     true
 }
 
 /// 从应用句柄取主窗口并应用材质（setup 里调用）；
-/// 同时注册系统深浅切换跟随（ThemeChanged → Mica 重新着色）。
+/// 同时注册系统深浅切换跟随（ThemeChanged → Acrylic 重新着色）。
 pub fn init_main_window_material(
     manager: &MaterialManager,
     app: &tauri::AppHandle,

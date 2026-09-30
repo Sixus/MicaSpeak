@@ -93,7 +93,7 @@ export type AppSnapshot = {
   overlay_enabled: boolean
   own_channel_id: number
   chat: ChatTabView[]
-  /** M5a：'Mica' 或 '实体（回退…）'；旧后端缺省 undefined */
+  /** M5a：'Acrylic' 或 '实体（回退…）'；旧后端缺省 undefined */
   material?: string
   /** M5c：Evergreen WebView2 版本；旧后端缺省 undefined */
   webview2_version?: string | null
