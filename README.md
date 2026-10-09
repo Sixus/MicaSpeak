@@ -61,10 +61,6 @@ pnpm tauri build    # 发行构建 → target/release/micaspeak.exe
 
 绿色版打包：`powershell -ExecutionPolicy Bypass -File scripts\package-portable.ps1`（前置：已执行 `pnpm tauri build`）。
 
-## 开发文档
-
-`docs/` 保留了从 M0 到 M6 的完整任务卡：产品方案、开发总指南、每个里程碑的验收标准与已知坑；`logs/acceptance-capture/` 是 M6 的实机验收证据截图。
-
 ## 许可
 
 本项目尚未选定开源许可证。发布物中附有第三方组件许可清单（`LICENSES/THIRD-PARTY-NOTICES.txt`）。
