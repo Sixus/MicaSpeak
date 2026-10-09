@@ -18,3 +18,10 @@ archive/
 
 # 内部开发文档不入库（本地保留，AGENTS.md 约定 docs 只读）
 docs/
+
+# 开发内部文档不入库（本地保留）
+PRODUCT.md
+Help.md
+DESIGN.md
+Chat.md
+HANDOFF-UI.md
