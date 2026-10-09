@@ -8,7 +8,9 @@ src-tauri/gen/
 gui-test-screenshots/
 .pnpm-store/
 .cu-test/
-logs/desktop.png
+# logs/：开发过程截图与临时工具不入库；仅 M6 验收证据（acceptance-capture）有意提交
+logs/*
+!logs/acceptance-capture
 dist/
 
 # M6 本地测试场地：TS3 服务器与官方身份导出（含私钥），永不入库
