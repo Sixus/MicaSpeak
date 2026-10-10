@@ -63,4 +63,4 @@ pnpm tauri build    # 发行构建 → target/release/micaspeak.exe
 
 ## 许可
 
-本项目尚未选定开源许可证。发布物中附有第三方组件许可清单（`LICENSES/THIRD-PARTY-NOTICES.txt`）。
+本项目基于 [MIT](LICENSE) 许可证发布。发布物中附有第三方组件许可清单（`LICENSES/THIRD-PARTY-NOTICES.txt`）。
